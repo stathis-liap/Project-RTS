@@ -1,0 +1,72 @@
+#version 330 core
+
+// Interpolated inputs from vertex shader
+in vec3 Position_worldspace;
+in vec3 Position_cameraspace;
+in vec3 Normal_cameraspace;
+in vec2 UV;
+in vec3 LightDirection_cameraspace;   // <-- from VS
+
+// Output
+out vec4 fragmentColor;
+
+// Uniforms
+uniform int useTexture = 0;
+uniform sampler2D diffuseColorSampler;
+uniform sampler2D specularColorSampler;
+
+// Light
+struct Light {
+    vec4 La;
+    vec4 Ld;
+    vec4 Ls;
+    float power;
+};
+uniform Light light;
+
+// Material
+struct Material {
+    vec4 Ka;
+    vec4 Kd;
+    vec4 Ks;
+    float Ns;
+};
+uniform Material mtl;
+
+void main()
+{
+    // --- Load material (with optional texture override) ---
+    vec4 Ka = mtl.Ka;
+    vec4 Kd = mtl.Kd;
+    vec4 Ks = mtl.Ks;
+    float Ns = mtl.Ns;
+
+    if (useTexture == 1) {
+        Kd = vec4(texture(diffuseColorSampler, UV).rgb, 1.0);
+        Ks = vec4(texture(specularColorSampler, UV).rgb, 1.0);
+        Ka = vec4(0.1, 0.1, 0.1, 1.0);
+        Ns = 10.0;
+    }
+
+    // --- Phong lighting (directional) ---
+    vec3 N = normalize(Normal_cameraspace);
+    vec3 L = normalize(LightDirection_cameraspace);  // already in camera space
+    vec3 E = normalize(-Position_cameraspace);       // eye direction
+
+    // Ambient
+    vec4 Ia = light.La * Ka;
+
+    // Diffuse
+    float cosTheta = clamp(dot(N, L), 0.0, 1.0);
+    vec4 Id = light.Ld * Kd * cosTheta;
+
+    // Specular
+    vec3 R = reflect(-L, N);
+    float cosAlpha = clamp(dot(E, R), 0.0, 1.0);
+    vec4 Is = light.Ls * Ks * pow(cosAlpha, Ns);
+
+    // --- Final color (no distance fall-off) ---
+    vec4 color = Ia + (Id + Is) * light.power;
+
+    fragmentColor = vec4(color.rgb, 1.0);
+}

@@ -1,0 +1,19 @@
+#version 330 core
+
+in vec3 Normal_cameraspace;
+in vec3 LightDirection_cameraspace;
+
+out vec3 color;
+
+uniform float lightPower;  // MUST be uploaded
+
+void main() {
+    vec3 n = normalize(Normal_cameraspace);
+    vec3 l = normalize(LightDirection_cameraspace);
+
+    float diff = max(dot(n, l), 0.0);
+    vec3 baseColor = vec3(0.3, 0.6, 0.3);
+    vec3 ambient = baseColor * 0.3;
+
+    color = ambient + baseColor * diff * lightPower;
+}

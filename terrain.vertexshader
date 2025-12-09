@@ -1,0 +1,29 @@
+#version 330 core
+
+layout(location = 0) in vec3 vertexPosition_model;
+layout(location = 1) in vec3 vertexNormal_model;
+
+uniform mat4 M;
+uniform mat4 V;
+uniform mat4 P;
+uniform vec3 lightDirection_worldspace;  // MUST match
+
+out vec3 Position_worldspace;
+out vec3 Normal_cameraspace;
+out vec3 EyeDirection_cameraspace;
+out vec3 LightDirection_cameraspace;
+
+void main() {
+    gl_Position = P * V * M * vec4(vertexPosition_model, 1.0);
+
+    Position_worldspace = (M * vec4(vertexPosition_model, 1)).xyz;
+
+    vec3 normalWorld = normalize((M * vec4(vertexNormal_model, 0)).xyz);
+    Normal_cameraspace = (V * vec4(normalWorld, 0)).xyz;
+
+    vec3 posCam = (V * M * vec4(vertexPosition_model, 1)).xyz;
+    EyeDirection_cameraspace = vec3(0,0,0) - posCam;
+
+    // Directional light: parallel rays from sun
+    LightDirection_cameraspace = (V * vec4(lightDirection_worldspace, 0.0)).xyz;
+}
