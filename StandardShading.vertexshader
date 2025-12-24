@@ -1,40 +1,36 @@
 #version 330 core
 
-// Input
 layout(location = 0) in vec3 vertexPosition_modelspace;
 layout(location = 1) in vec3 vertexNormal_modelspace;
 layout(location = 2) in vec2 vertexUV;
 
-// Output to fragment shader
 out vec3 Position_worldspace;
 out vec3 Position_cameraspace;
 out vec3 Normal_cameraspace;
 out vec2 UV;
-out vec3 LightDirection_cameraspace;   // <-- NEW: constant direction
+out vec3 LightDirection_cameraspace;
+out vec4 FragPosLightSpace;  // For shadow mapping
 
-// Uniforms
 uniform mat4 P;
 uniform mat4 V;
 uniform mat4 M;
-uniform vec3 lightDirection_worldspace;  // <-- NEW: direction of sun
+uniform mat4 lightSpaceMatrix;
+uniform vec3 lightDirection_worldspace;  // Direction TOWARD the light
 
 void main()
 {
-    // Transform vertex
-    gl_Position = P * V * M * vec4(vertexPosition_modelspace, 1.0);
-    gl_PointSize = 10.0;
+    vec4 worldPos = M * vec4(vertexPosition_modelspace, 1.0);
 
-    // World space
-    Position_worldspace = (M * vec4(vertexPosition_modelspace, 1.0)).xyz;
+    gl_Position = P * V * worldPos;
 
-    // Camera space
-    Position_cameraspace = (V * M * vec4(vertexPosition_modelspace, 1.0)).xyz;
-    Normal_cameraspace   = (V * M * vec4(vertexNormal_modelspace, 0.0)).xyz;
+    Position_worldspace = worldPos.xyz;
+    Position_cameraspace = (V * worldPos).xyz;
 
-    // Pass UV
+    Normal_cameraspace = normalize(mat3(V * M) * vertexNormal_modelspace);
+
     UV = vertexUV;
 
-    // Directional light: constant direction in world space
-    // Convert to camera space: -lightDirection (because light comes *from* sun)
-    LightDirection_cameraspace = (V * vec4(-lightDirection_worldspace, 0.0)).xyz;
+    LightDirection_cameraspace = normalize(mat3(V) * lightDirection_worldspace);
+
+    FragPosLightSpace = lightSpaceMatrix * worldPos;
 }

@@ -2,18 +2,67 @@
 
 in vec3 Normal_cameraspace;
 in vec3 LightDirection_cameraspace;
+in vec4 FragPosLightSpace;
+in vec2 UV;
 
 out vec3 color;
 
-uniform float lightPower;  // MUST be uploaded
+uniform sampler2D shadowMap;
+uniform sampler2D snowTrailMap;
+uniform float lightPower;
 
-void main() {
+// -------------------------------------------------------
+float calculateShadow(vec4 fragPosLightSpace)
+{
+    vec3 projCoords = fragPosLightSpace.xyz / fragPosLightSpace.w;
+    projCoords = projCoords * 0.5 + 0.5;
+
+    // Early out if outside frustum in X/Y
+    if (projCoords.x < 0.0 || projCoords.x > 1.0 ||
+        projCoords.y < 0.0 || projCoords.y > 1.0)
+        return 0.0;  // fully lit
+
+    float currentDepth = projCoords.z;
+
     vec3 n = normalize(Normal_cameraspace);
     vec3 l = normalize(LightDirection_cameraspace);
+    float cosTheta = clamp(dot(n, l), 0.0, 1.0);
+    float bias = 0.0003 + (1.0 - cosTheta) * 0.0012;
+    bias = clamp(bias, 0.0002, 0.005);
 
-    float diff = max(dot(n, l), 0.0);
-    vec3 baseColor = vec3(0.3, 0.6, 0.3);
+    float shadow = 0.0;
+    vec2 texelSize = 1.0 / textureSize(shadowMap, 0);
+    for (int x = -1; x <= 1; ++x)
+    {
+        for (int y = -1; y <= 1; ++y)
+        {
+            float pcfDepth = texture(shadowMap, projCoords.xy + vec2(x, y) * texelSize).r;
+            shadow += currentDepth - bias > pcfDepth ? 1.0 : 0.0;
+        }
+    }
+    shadow /= 9.0;
+
+    return shadow;  // ← THIS WAS MISSING!
+}
+
+void main()
+{
+    vec3 N = normalize(Normal_cameraspace);
+    vec3 L = normalize(LightDirection_cameraspace);
+    float diff = max(dot(N, L), 0.0);
+
+    vec3 grassColor = vec3(0.30, 0.60, 0.30);
+    vec3 snowColor = vec3(0.95, 0.97, 1.0);
+
+    float snowAmount = texture(snowTrailMap, UV).r;
+    vec3 baseColor = mix(grassColor, snowColor, snowAmount);
+
     vec3 ambient = baseColor * 0.3;
 
-    color = ambient + baseColor * diff * lightPower;
+    float shadow = calculateShadow(FragPosLightSpace);
+
+    vec3 diffuseLit = baseColor * diff * lightPower;
+    vec3 lighting = ambient + (1.0 - shadow) * diffuseLit;
+
+    color = lighting;
 }

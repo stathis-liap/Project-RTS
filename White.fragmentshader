@@ -1,0 +1,15 @@
+#version 330 core
+in vec2 UV;
+out vec4 FragColor;
+
+uniform sampler2D currentSnow;
+
+void main() {
+    // Read current color
+    vec4 current = texture(currentSnow, UV);
+    
+    // Add a tiny bit to brighten it (move towards white = 1.0)
+    float newValue = min(current.r + 0.002, 1.0);  // Clamp at 1.0
+    
+    FragColor = vec4(newValue, newValue, newValue, 1.0);
+}

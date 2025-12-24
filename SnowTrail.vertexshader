@@ -1,0 +1,18 @@
+#version 330 core
+layout(location = 0) in float dummy;
+
+uniform mat4 model;
+
+void main() {
+    // Extract position from model matrix (translation component)
+    vec4 worldPos = model * vec4(0.0, 0.0, 0.0, 1.0);
+    
+    // Project to 0-1 range (assuming terrain is 0-512)
+    vec2 uv = worldPos.xz / 512.0;
+    
+    // Convert to clip space (-1 to 1)
+    gl_Position = vec4(uv * 2.0 - 1.0, 0.0, 1.0);
+    
+    // Set point size for trail width (in pixels)
+    gl_PointSize = 5.0;  // Adjust this for wider/narrower trails
+}
