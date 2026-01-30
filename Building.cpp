@@ -5,11 +5,30 @@
 #include <stdexcept>
 
 Building::Building(BuildingType type, const glm::vec3& pos, const std::string& meshPath)
-    : type_(type), position_(pos), mesh_(nullptr)
+    : type_(type), position_(pos), mesh_(nullptr),
+    currentHealth_(0.0f), buildProgress_(0.0f), isConstructed_(false)
 {
+    // ✅ Initialize stats first
+    initializeStats();
+
     std::string path = meshPath;
+
+    // Choose model based on building type
     if (path.empty()) {
-        path = "models/cube.obj";  // fallback for all types
+        switch (type) {
+        case BuildingType::TOWN_CENTER:
+            path = "models/building_castle_blue.obj";
+            break;
+        case BuildingType::BARRACKS:
+            path = "models/building_barracks_blue.obj";
+            break;
+        case BuildingType::SHOOTING_RANGE:
+            path = "models/building_archeryrange_blue.obj";
+            break;
+        default:
+            path = "models/cube.obj";
+            break;
+        }
     }
 
     std::cout << "Loading building model: '" << path << "'" << std::endl;
@@ -32,13 +51,35 @@ Building::Building(BuildingType type, const glm::vec3& pos, const std::string& m
             mesh_ = new Mesh("models/cube.obj");
         }
         else {
-            throw; // if even cube fails, crash
+            throw;
         }
     }
 
-    // Adjust Y position so building sits ON the terrain, not inside it
-    float scale = (type_ == BuildingType::TOWN_CENTER) ? 11.0f : 8.0f;
-    position_.y += scale * 0.5f;  // assuming mesh is centered at origin (-0.5 to +0.5)
+    // ✅ Calculate building dimensions and base position
+    float scale;
+    if (type_ == BuildingType::TOWN_CENTER) {
+        scale = 1.0f;
+        buildingHeight_ = scale * 1.0f;  // Cube/mesh height when scaled
+    }
+    else if (type_ == BuildingType::BARRACKS) {
+        scale = 1.0f;
+        buildingHeight_ = scale * 1.0f;
+    }
+    else if (type_ == BuildingType::SHOOTING_RANGE) {
+        scale = 1.0f;
+        buildingHeight_ = scale * 1.0f;
+    }
+    else {
+        scale = 1.0f;
+        buildingHeight_ = scale * 1.0f;
+    }
+
+    // ✅ Store base position (bottom of building on ground)
+    basePosition_ = pos;
+    basePosition_.y = pos.y;  // Ground level
+
+    // Center position (for model matrix)
+    position_.y += scale * 0.5f;
 }
 
 Building::~Building()
@@ -47,33 +88,171 @@ Building::~Building()
     mesh_ = nullptr;
 }
 
-void Building::draw(const glm::mat4& view, const glm::mat4& projection, GLuint shaderProgram)
+// ✅ Initialize building stats based on type
+void Building::initializeStats()
 {
-   
+    switch (type_) {
+    case BuildingType::TOWN_CENTER:
+        stats_.maxHealth = 2000.0f;
+        stats_.buildTime = 60.0f;
+        stats_.buildCost = { 200, 100 };
+        stats_.repairCost = { 1, 0 };
+        break;
 
-    glm::mat4 model = glm::translate(glm::mat4(1.0f), position_);
+    case BuildingType::BARRACKS:
+        stats_.maxHealth = 1500.0f;
+        stats_.buildTime = 45.0f;
+        stats_.buildCost = { 150, 50 };
+        stats_.repairCost = { 1, 0 };
+        break;
 
-    float scale = (type_ == BuildingType::TOWN_CENTER) ? 11.0f : 8.0f;
+    case BuildingType::SHOOTING_RANGE:
+        stats_.maxHealth = 1000.0f;
+        stats_.buildTime = 30.0f;
+        stats_.buildCost = { 100, 75 };
+        stats_.repairCost = { 1, 0 };
+        break;
+
+    default:
+        stats_.maxHealth = 1000.0f;
+        stats_.buildTime = 30.0f;
+        stats_.buildCost = { 100, 50 };
+        stats_.repairCost = { 1, 0 };
+        break;
+    }
+
+    currentHealth_ = stats_.maxHealth;
+}
+
+void Building::draw(const glm::mat4& view, const glm::mat4& projection,
+    GLuint shaderProgram, float passedAlpha)
+{
+    // -----------------------------------------------------------
+    // 1. SETUP (Scale & Matrix) - Keep your existing working code
+    // -----------------------------------------------------------
+    float scale = 1.0f;
+    if (type_ == BuildingType::TOWN_CENTER) scale = 10.0f; 
+    else if (type_ == BuildingType::BARRACKS) scale = 10.0f;
+    else scale = 10.0f;
+
+    glm::mat4 model = glm::mat4(1.0f);
+    model = glm::translate(model, basePosition_);
+    model = glm::translate(model, glm::vec3(0.0f, 0.0f * scale, 0.0f)); // Sit on ground
     model = glm::scale(model, glm::vec3(scale));
 
-    GLuint locM = glGetUniformLocation(shaderProgram, "M");
-    GLuint locV = glGetUniformLocation(shaderProgram, "V");
-    GLuint locP = glGetUniformLocation(shaderProgram, "P");
+    // Send Matrices
+    glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "M"), 1, GL_FALSE, &model[0][0]);
+    glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "V"), 1, GL_FALSE, &view[0][0]);
+    glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "P"), 1, GL_FALSE, &projection[0][0]);
 
-    if (locM != -1) glUniformMatrix4fv(locM, 1, GL_FALSE, &model[0][0]);
-    if (locV != -1) glUniformMatrix4fv(locV, 1, GL_FALSE, &view[0][0]);
-    if (locP != -1) glUniformMatrix4fv(locP, 1, GL_FALSE, &projection[0][0]);
+    // -----------------------------------------------------------
+    // 2. DETERMINE VISUAL STATE
+    // -----------------------------------------------------------
+    float finalAlpha = 1.0f;
+    float clipProgress = 1.0f;
+
+    // CASE A: PREVIEW MODE
+    // If we passed a transparency value (like 0.3), treat it as a preview.
+    // Show the whole building (clip = 1.0), but transparent.
+    if (passedAlpha < 0.99f) {
+        finalAlpha = 0.3f; // 70% transparent
+        clipProgress = 1.0f; // No clipping, show full ghost
+    }
+    // CASE B: UNDER CONSTRUCTION
+    else if (!isConstructed_) {
+        // Fade from 50% (0.5) to 100% (1.0) based on progress
+        finalAlpha = 0.5f + (0.5f * buildProgress_);
+        
+        // Grow from bottom up
+        clipProgress = buildProgress_;
+    }
+    // CASE C: COMPLETED BUILDING
+    else {
+        finalAlpha = 1.0f; // Solid
+        clipProgress = 1.0f; // Full height
+    }
+
+    // -----------------------------------------------------------
+    // 3. SEND UNIFORMS
+    // -----------------------------------------------------------
+    
+    // Send Transparency
+    GLuint kdLoc = glGetUniformLocation(shaderProgram, "mtl.Kd");
+    if (kdLoc != -1) {
+        // Use a neutral grey/white color, modified by our calculated alpha
+        glUniform4f(kdLoc, 0.8f, 0.8f, 0.8f, finalAlpha);
+    }
+
+    // Send Clipping Data
+    float worldHeight = (2.0f * scale) + 50.0f; 
+    glm::vec3 basePos = basePosition_;
+
+    glUniform1f(glGetUniformLocation(shaderProgram, "constructionProgress"), clipProgress);
+    glUniform1f(glGetUniformLocation(shaderProgram, "buildingHeight"), worldHeight);
+    glUniform3fv(glGetUniformLocation(shaderProgram, "buildingBasePos"), 1, &basePos[0]);
 
     if (mesh_) mesh_->draw();
 }
 
+void Building::setPosition(const glm::vec3& pos)
+{
+    basePosition_ = pos;
+    basePosition_.y = 0.0f; // Ensure it stays on ground
 
+    // Update position_ for other logic, but 'draw' relies on basePosition_ now.
+    position_ = basePosition_;
+}
 
-//UnitType Building::getSpawnableUnit() const
-//{
-//    switch (type_) {
-//    case BuildingType::TOWN_CENTER: return UnitType::WORKER;
-//    case BuildingType::BARRACKS:     return UnitType::MELEE;
-//    default:                        return UnitType::WORKER;
-//    }
-//}
+// ✅ Update building construction over time
+void Building::updateConstruction(float deltaTime)
+{
+    if (isConstructed_) return;
+
+    buildProgress_ += deltaTime / stats_.buildTime;
+
+    if (buildProgress_ >= 1.0f) {
+        buildProgress_ = 1.0f;
+        isConstructed_ = true;
+        currentHealth_ = stats_.maxHealth;
+        std::cout << "Building construction complete!" << std::endl;
+    }
+}
+
+// ✅ Take damage
+void Building::takeDamage(float damage)
+{
+    if (!isConstructed_) return;
+
+    currentHealth_ -= damage;
+    if (currentHealth_ < 0.0f) {
+        currentHealth_ = 0.0f;
+        std::cout << "Building destroyed!" << std::endl;
+    }
+}
+
+// ✅ Repair building
+void Building::repair(float amount)
+{
+    if (!isConstructed_) return;
+
+    currentHealth_ += amount;
+    if (currentHealth_ > stats_.maxHealth) {
+        currentHealth_ = stats_.maxHealth;
+    }
+}
+
+ResourceCost Building::getStaticCost(BuildingType type) {
+    // Return the hardcoded values here so you don't need an object instance
+    switch (type) {
+    case BuildingType::TOWN_CENTER: return { 200, 100 };
+    case BuildingType::BARRACKS:    return { 150, 50 };
+    case BuildingType::SHOOTING_RANGE: return { 100, 75 };
+    default: return { 0, 0 };
+    }
+}
+
+// ✅ Get building height (for clipping calculations)
+float Building::getBuildingHeight() const
+{
+    return buildingHeight_;
+}

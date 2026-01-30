@@ -20,6 +20,8 @@ public:
 
     glm::vec3 getHeightAt(float x, float z) const;
 
+    void flattenArea(const glm::vec3& center, float radius);
+
     int width, height;
     float amplitude;
 
@@ -41,6 +43,7 @@ private:
     void computeNormals();
     void buildMesh();
     void applyDiagonalSymmetry();
+    void recalculateNormalsInArea(int centerX, int centerZ, int radius);
 
     float noise(float x, float z) const;
     float hash(int xi, int zi) const;

@@ -1,25 +1,29 @@
-// Mesh.cpp
 #include "Mesh.h"
-
 #include <iostream>
 #include <fstream>
 #include <sstream>
 #include <vector>
 #include <map>
-#include <utility>      // std::pair
+#include <tuple> // Use tuple for (v, vt, vn) key
 #include <stdexcept>
+#include <cstring> // for strcmp
 
 Mesh::Mesh(const std::string& filepath)
 {
+    // Raw data from file
     std::vector<glm::vec3> temp_pos;
-    std::vector<glm::vec2> temp_uv;   // not used now, but kept for future
+    std::vector<glm::vec2> temp_uv;
     std::vector<glm::vec3> temp_norm;
 
-    std::vector<glm::vec3> positions;
-    std::vector<glm::vec3> normals;
+    // Final buffers for OpenGL
+    std::vector<glm::vec3> final_pos;
+    std::vector<glm::vec2> final_uv;
+    std::vector<glm::vec3> final_norm;
     std::vector<unsigned int> indices;
 
-    std::map<std::pair<int, int>, unsigned int> vertexMap; // (v, vn) -> final index
+    // Map to deduplicate vertices: (v_idx, vt_idx, vn_idx) -> final_index
+    // Using a tuple allows us to uniquely identify a vertex by all 3 attributes
+    std::map<std::tuple<int, int, int>, unsigned int> vertexMap;
 
     std::ifstream file(filepath);
     if (!file.is_open())
@@ -28,81 +32,124 @@ Mesh::Mesh(const std::string& filepath)
     std::string line;
     while (std::getline(file, line))
     {
+        if (line.empty()) continue;
+
         std::istringstream iss(line);
         std::string prefix;
         iss >> prefix;
 
         // --------------------------------------------------------------
-        //  Vertex data
+        //  Vertex Position (v)
         // --------------------------------------------------------------
         if (prefix == "v") {
             glm::vec3 p; iss >> p.x >> p.y >> p.z;
             temp_pos.push_back(p);
         }
+        // --------------------------------------------------------------
+        //  Texture Coordinate (vt)
+        // --------------------------------------------------------------
         else if (prefix == "vt") {
             glm::vec2 uv; iss >> uv.x >> uv.y;
             temp_uv.push_back(uv);
         }
+        // --------------------------------------------------------------
+        //  Vertex Normal (vn)
+        // --------------------------------------------------------------
         else if (prefix == "vn") {
             glm::vec3 n; iss >> n.x >> n.y >> n.z;
             temp_norm.push_back(n);
         }
-
         // --------------------------------------------------------------
-        //  Face (supports v//vn  and  v/vt/vn)
+        //  Face (f) - Handles Triangles & Quads, various formats
         // --------------------------------------------------------------
         else if (prefix == "f")
         {
-            std::string token[3];
-            iss >> token[0] >> token[1] >> token[2];
+            // We read the rest of the line to handle flexible numbers of vertices (3 or 4)
+            std::string remainder;
+            std::getline(iss, remainder);
+            std::stringstream ss(remainder);
+            std::string segment;
 
-            // each token:  v   or   v/vt   or   v//vn   or   v/vt/vn
-            int v[3] = { 0,0,0 }, vt[3] = { 0,0,0 }, vn[3] = { 0,0,0 };
+            std::vector<std::tuple<int, int, int>> faceVertices;
 
-            for (int i = 0; i < 3; ++i)
-            {
-                std::istringstream tss(token[i]);
-                std::string part;
-                int idx = 0;
-                while (std::getline(tss, part, '/'))
-                {
-                    if (part.empty()) { ++idx; continue; }
-                    int val = std::stoi(part);
-                    if (idx == 0) v[i] = val;
-                    else if (idx == 1) vt[i] = val;
-                    else if (idx == 2) vn[i] = val;
-                    ++idx;
+            while (ss >> segment) {
+                int v = 0, vt = 0, vn = 0;
+
+                // Check format by counting slashes
+                int slashCount = 0;
+                for (char c : segment) if (c == '/') slashCount++;
+
+                // Format: v//vn (common in non-textured meshes)
+                if (slashCount == 2 && segment.find("//") != std::string::npos) {
+                    sscanf(segment.c_str(), "%d//%d", &v, &vn);
                 }
+                // Format: v/vt/vn (standard full format)
+                else if (slashCount == 2) {
+                    sscanf(segment.c_str(), "%d/%d/%d", &v, &vt, &vn);
+                }
+                // Format: v/vt (no normals)
+                else if (slashCount == 1) {
+                    sscanf(segment.c_str(), "%d/%d", &v, &vt);
+                }
+                // Format: v (position only)
+                else {
+                    sscanf(segment.c_str(), "%d", &v);
+                }
+
+                faceVertices.push_back(std::make_tuple(v, vt, vn));
             }
 
-            // ----- safety checks -----
-            for (int i = 0; i < 3; ++i)
-            {
-                if (v[i]  < 1 || v[i]  > static_cast<int>(temp_pos.size()) ||
-                    vn[i] < 1 || vn[i] > static_cast<int>(temp_norm.size()))
-                {
-                    std::cerr << "OBJ index out of range in " << filepath
-                        << "  v=" << v[i] << " (max " << temp_pos.size()
-                        << ")  vn=" << vn[i] << " (max " << temp_norm.size() << ")\n";
-                    continue;   // skip this triangle
-                }
-            }
+            // Now triangulate the face (Ear Clipping / Fan triangulation)
+            // A face with N vertices creates (N-2) triangles: 0-1-2, 0-2-3, etc.
+            if (faceVertices.size() < 3) continue; // Degenerate line/point
 
-            // ----- deduplicate (v, vn) -----
-            for (int i = 0; i < 3; ++i)
-            {
-                std::pair<int, int> key{ v[i], vn[i] };
-                auto it = vertexMap.find(key);
-                if (it == vertexMap.end())
-                {
-                    unsigned int idx = static_cast<unsigned int>(positions.size());
-                    positions.push_back(temp_pos[v[i] - 1]);
-                    normals.push_back(temp_norm[vn[i] - 1]);
-                    vertexMap[key] = idx;
-                    indices.push_back(idx);
+            for (size_t i = 1; i + 1 < faceVertices.size(); ++i) {
+                // Triangle vertices: 0, i, i+1
+                std::tuple<int, int, int> tri[3] = {
+                    faceVertices[0],
+                    faceVertices[i],
+                    faceVertices[i + 1]
+                };
+
+                for (int k = 0; k < 3; ++k) {
+                    int v_idx = std::get<0>(tri[k]);
+                    int vt_idx = std::get<1>(tri[k]);
+                    int vn_idx = std::get<2>(tri[k]);
+
+                    // Handle negative indices (OBJ relative indexing)
+                    if (v_idx < 0) v_idx = temp_pos.size() + v_idx + 1;
+                    if (vt_idx < 0) vt_idx = temp_uv.size() + vt_idx + 1;
+                    if (vn_idx < 0) vn_idx = temp_norm.size() + vn_idx + 1;
+
+                    // Create key for deduplication
+                    auto key = std::make_tuple(v_idx, vt_idx, vn_idx);
+
+                    if (vertexMap.find(key) == vertexMap.end()) {
+                        // New unique vertex combination
+                        unsigned int newIndex = (unsigned int)final_pos.size();
+                        vertexMap[key] = newIndex;
+                        indices.push_back(newIndex);
+
+                        // Push Position (Required)
+                        final_pos.push_back(temp_pos[v_idx - 1]);
+
+                        // Push UV (Optional, default 0,0)
+                        if (vt_idx > 0 && vt_idx <= (int)temp_uv.size())
+                            final_uv.push_back(temp_uv[vt_idx - 1]);
+                        else
+                            final_uv.push_back(glm::vec2(0.0f));
+
+                        // Push Normal (Optional, default 0,1,0)
+                        if (vn_idx > 0 && vn_idx <= (int)temp_norm.size())
+                            final_norm.push_back(temp_norm[vn_idx - 1]);
+                        else
+                            final_norm.push_back(glm::vec3(0, 1, 0));
+                    }
+                    else {
+                        // Reuse existing index
+                        indices.push_back(vertexMap[key]);
+                    }
                 }
-                else
-                    indices.push_back(it->second);
             }
         }
     }
@@ -110,40 +157,47 @@ Mesh::Mesh(const std::string& filepath)
     indexCount = static_cast<GLsizei>(indices.size());
 
     // --------------------------------------------------------------
-    //  Build interleaved VBO (pos + normal)
+    //  Build interleaved VBO (pos + uv + norm)
     // --------------------------------------------------------------
     glGenVertexArrays(1, &VAO);
     glGenBuffers(1, &VBO);
     glGenBuffers(1, &EBO);
+
     glBindVertexArray(VAO);
 
-    struct Vertex { glm::vec3 pos; glm::vec3 norm; };
+    // Structure matching our interleaved data
+    struct Vertex {
+        glm::vec3 pos;
+        glm::vec3 norm; // Swapped order to match your original shader binding if needed, 
+        // BUT standard is often Pos, Normal, UV. 
+        // Based on your previous code it was Pos, Norm. 
+        // I will add UV support here because new models have it.
+        glm::vec2 uv;
+    };
+
     std::vector<Vertex> data;
-    data.reserve(positions.size());
-    for (size_t i = 0; i < positions.size(); ++i)
-        data.push_back({ positions[i], normals[i] });
+    data.reserve(final_pos.size());
+    for (size_t i = 0; i < final_pos.size(); ++i) {
+        data.push_back({ final_pos[i], final_norm[i], final_uv[i] });
+    }
 
     glBindBuffer(GL_ARRAY_BUFFER, VBO);
-    glBufferData(GL_ARRAY_BUFFER,
-        data.size() * sizeof(Vertex),
-        data.data(),
-        GL_STATIC_DRAW);
+    glBufferData(GL_ARRAY_BUFFER, data.size() * sizeof(Vertex), data.data(), GL_STATIC_DRAW);
 
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, EBO);
-    glBufferData(GL_ELEMENT_ARRAY_BUFFER,
-        indices.size() * sizeof(unsigned int),
-        indices.data(),
-        GL_STATIC_DRAW);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices.size() * sizeof(unsigned int), indices.data(), GL_STATIC_DRAW);
 
-    // position attribute
+    // Attribute 0: Position (3 floats)
     glEnableVertexAttribArray(0);
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex),
-        (void*)offsetof(Vertex, pos));
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, pos));
 
-    // normal attribute
+    // Attribute 1: Normal (3 floats)
     glEnableVertexAttribArray(1);
-    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex),
-        (void*)offsetof(Vertex, norm));
+    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, norm));
+
+    // Attribute 2: UV (2 floats) - NEW! (Optional for your current shader, but good for future)
+    glEnableVertexAttribArray(2);
+    glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, uv));
 
     glBindVertexArray(0);
 }

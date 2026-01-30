@@ -1,5 +1,4 @@
 #version 330 core
-
 layout(location = 0) in vec3 vertexPosition_modelspace;
 layout(location = 1) in vec3 vertexNormal_modelspace;
 layout(location = 2) in vec2 vertexUV;
@@ -9,28 +8,34 @@ out vec3 Position_cameraspace;
 out vec3 Normal_cameraspace;
 out vec2 UV;
 out vec3 LightDirection_cameraspace;
-out vec4 FragPosLightSpace;  // For shadow mapping
+out vec4 FragPosLightSpace;
+out float ClipHeight;  // ✅ NEW: for construction clipping
 
 uniform mat4 P;
 uniform mat4 V;
 uniform mat4 M;
 uniform mat4 lightSpaceMatrix;
-uniform vec3 lightDirection_worldspace;  // Direction TOWARD the light
+uniform vec3 lightDirection_worldspace;
+uniform float constructionProgress;  // ✅ NEW: 0.0 to 1.0
+uniform float buildingHeight;         // ✅ NEW: max height of building
+uniform vec3 buildingBasePos;         // ✅ NEW: building base position
 
 void main()
 {
     vec4 worldPos = M * vec4(vertexPosition_modelspace, 1.0);
-
     gl_Position = P * V * worldPos;
-
+    
     Position_worldspace = worldPos.xyz;
     Position_cameraspace = (V * worldPos).xyz;
-
     Normal_cameraspace = normalize(mat3(V * M) * vertexNormal_modelspace);
-
     UV = vertexUV;
-
+    
     LightDirection_cameraspace = normalize(mat3(V) * lightDirection_worldspace);
-
     FragPosLightSpace = lightSpaceMatrix * worldPos;
+    
+    // Calculate clip height for construction
+    // Height of this vertex relative to building base
+    float relativeHeight = worldPos.y - buildingBasePos.y;
+    float clipThreshold = buildingHeight * constructionProgress;
+    ClipHeight = relativeHeight - clipThreshold;
 }

@@ -7,7 +7,7 @@ using namespace glm;
 
 Terrain::Terrain(int width, int height, float amplitude)
     : width(width), height(height), amplitude(amplitude),
-    vao(0), vbo(0), ebo(0)  // initialize members here
+    vao(0), vbo(0), ebo(0)
 {
     generate();
 }
@@ -156,7 +156,7 @@ void Terrain::buildMesh()
     glBindVertexArray(vao);
 
     glBindBuffer(GL_ARRAY_BUFFER, vbo);
-    glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(Vertex), vertices.data(), GL_STATIC_DRAW);
+    glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(Vertex), vertices.data(), GL_DYNAMIC_DRAW); // ✅ Changed to DYNAMIC_DRAW
 
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo);
     glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices.size() * sizeof(unsigned int), indices.data(), GL_STATIC_DRAW);
@@ -209,4 +209,113 @@ glm::vec3 Terrain::getHeightAt(float x, float z) const
 
     float h = heightmap[zi * width + xi];
     return vec3(x, h, z);
+}
+
+// ============================================================
+// ✅ NEW: Flatten terrain area for building placement
+// ============================================================
+void Terrain::flattenArea(const glm::vec3& center, float radius)
+{
+    // Convert world position to grid coordinates
+    int centerX = static_cast<int>(center.x);
+    int centerZ = static_cast<int>(center.z);
+
+    // Get the height at the center point
+    float targetHeight = heightmap[centerZ * width + centerX];
+
+    // Flatten in a circle around the center
+    int radiusInt = static_cast<int>(radius) + 1;
+
+    for (int z = centerZ - radiusInt; z <= centerZ + radiusInt; ++z)
+    {
+        for (int x = centerX - radiusInt; x <= centerX + radiusInt; ++x)
+        {
+            // Check bounds
+            if (x < 0 || x >= width || z < 0 || z >= height) continue;
+
+            // Check if within circular radius
+            float dx = x - center.x;
+            float dz = z - center.z;
+            float distance = sqrt(dx * dx + dz * dz);
+
+            if (distance <= radius)
+            {
+                // Smooth falloff at edges (quadratic)
+                float falloff = 1.0f - (distance / radius);
+                falloff = falloff * falloff; // Square for smoother transition
+
+                // Blend between current height and target height
+                int index = z * width + x;
+                float currentHeight = heightmap[index];
+                heightmap[index] = glm::mix(currentHeight, targetHeight, falloff);
+
+                // Update vertex position
+                vertices[index].pos.y = heightmap[index];
+            }
+        }
+    }
+
+    // ✅ Recalculate normals for affected area
+    recalculateNormalsInArea(centerX, centerZ, radiusInt);
+
+    // ✅ Update GPU buffer with new vertex data
+    glBindBuffer(GL_ARRAY_BUFFER, vbo);
+    glBufferSubData(GL_ARRAY_BUFFER, 0, vertices.size() * sizeof(Vertex), vertices.data());
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+}
+
+// ============================================================
+// ✅ NEW: Recalculate normals for a specific area
+// ============================================================
+void Terrain::recalculateNormalsInArea(int centerX, int centerZ, int radius)
+{
+    // Expand radius slightly to ensure smooth transitions
+    int expandedRadius = radius + 2;
+
+    int minX = std::max(0, centerX - expandedRadius);
+    int maxX = std::min(width - 1, centerX + expandedRadius);
+    int minZ = std::max(0, centerZ - expandedRadius);
+    int maxZ = std::min(height - 1, centerZ + expandedRadius);
+
+    // Reset normals in affected area
+    for (int z = minZ; z <= maxZ; ++z)
+    {
+        for (int x = minX; x <= maxX; ++x)
+        {
+            vertices[z * width + x].normal = vec3(0.0f);
+        }
+    }
+
+    // Recalculate normals from surrounding triangles
+    for (int z = minZ; z < maxZ; ++z)
+    {
+        for (int x = minX; x < maxX; ++x)
+        {
+            vec3 p0 = vertices[z * width + x].pos;
+            vec3 p1 = vertices[z * width + x + 1].pos;
+            vec3 p2 = vertices[(z + 1) * width + x].pos;
+            vec3 p3 = vertices[(z + 1) * width + x + 1].pos;
+
+            vec3 n1 = cross(p2 - p0, p1 - p0);
+            vec3 n2 = cross(p2 - p1, p3 - p1);
+
+            vertices[z * width + x].normal += n1;
+            vertices[z * width + x + 1].normal += n1 + n2;
+            vertices[(z + 1) * width + x].normal += n1 + n2;
+            vertices[(z + 1) * width + x + 1].normal += n2;
+        }
+    }
+
+    // Normalize all normals in affected area
+    for (int z = minZ; z <= maxZ; ++z)
+    {
+        for (int x = minX; x <= maxX; ++x)
+        {
+            vec3& n = vertices[z * width + x].normal;
+            if (length(n) > 0.0001f)
+                n = normalize(n);
+            else
+                n = vec3(0, 1, 0);
+        }
+    }
 }
