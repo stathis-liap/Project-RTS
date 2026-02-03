@@ -1,0 +1,88 @@
+#version 330 core
+
+// ==========================================
+// INPUTS (Attributes)
+// ==========================================
+layout(location = 0) in vec3 vertexPosition_modelspace;
+layout(location = 1) in vec3 vertexNormal_modelspace;
+layout(location = 2) in vec2 vertexUV;
+layout(location = 3) in ivec4 boneIDs;
+layout(location = 4) in vec4 weights;
+
+// INSTANCED MATRIX (Locations 5, 6, 7, 8)
+layout(location = 5) in mat4 instanceModelMatrix; 
+
+// ==========================================
+// OUTPUTS (Must match Fragment Shader Inputs exactly)
+// ==========================================
+out vec2 UV;
+out vec3 Position_worldspace;
+out vec3 Position_cameraspace;
+out vec3 Normal_cameraspace;
+out vec3 LightDirection_cameraspace;
+out vec4 FragPosLightSpace;
+out float ClipHeight;
+
+// ==========================================
+// UNIFORMS
+// ==========================================
+uniform mat4 P;
+uniform mat4 V;
+uniform vec3 lightDirection_worldspace;
+uniform mat4 lightSpaceMatrix;
+
+// Bone Animation
+const int MAX_BONES = 100;
+uniform mat4 finalBonesMatrices[MAX_BONES];
+
+void main() {
+    // ------------------------------------------------
+    // 1. CALCULATE BONE TRANSFORM (Skinning)
+    // ------------------------------------------------
+    mat4 BoneTransform = finalBonesMatrices[boneIDs[0]] * weights[0];
+    BoneTransform     += finalBonesMatrices[boneIDs[1]] * weights[1];
+    BoneTransform     += finalBonesMatrices[boneIDs[2]] * weights[2];
+    BoneTransform     += finalBonesMatrices[boneIDs[3]] * weights[3];
+
+    // Apply Bone Transform
+    vec4 skinnedPos = BoneTransform * vec4(vertexPosition_modelspace, 1.0);
+    vec4 skinnedNormal = BoneTransform * vec4(vertexNormal_modelspace, 0.0);
+
+    // ------------------------------------------------
+    // 2. APPLY INSTANCE TRANSFORM
+    // ------------------------------------------------
+    mat4 M = instanceModelMatrix; 
+
+    // Final Vertex Position
+    gl_Position = P * V * M * skinnedPos;
+
+    // ------------------------------------------------
+    // 3. CALCULATE LIGHTING OUTPUTS
+    // ------------------------------------------------
+    
+    // World Position
+    Position_worldspace = (M * skinnedPos).xyz;
+
+    // Camera Space Position
+    vec3 vertexPosition_cameraspace = (V * M * skinnedPos).xyz;
+    Position_cameraspace = vertexPosition_cameraspace;
+
+    // Normal in Camera Space
+    Normal_cameraspace = (V * M * skinnedNormal).xyz; 
+
+    // Light Direction
+    // We calculate Eye Direction here but don't output it because Fragment shader calculates it manually
+    vec3 EyeDirection_cameraspace = vec3(0,0,0) - vertexPosition_cameraspace;
+    
+    vec3 LightPosition_cameraspace = (V * vec4(lightDirection_worldspace, 0.0)).xyz;
+    LightDirection_cameraspace = LightPosition_cameraspace + EyeDirection_cameraspace;
+
+    // Shadow Map
+    FragPosLightSpace = lightSpaceMatrix * vec4(Position_worldspace, 1.0);
+
+    // ✅ VISIBILITY FIX: Set to -1.0 so logic "if > 0.001 discard" is FALSE.
+    ClipHeight = -1.0f; 
+
+    // UVs
+    UV = vertexUV;
+}

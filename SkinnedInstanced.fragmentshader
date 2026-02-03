@@ -1,0 +1,126 @@
+#version 330 core
+
+// --- INPUTS ---
+in vec3 Position_worldspace;
+in vec3 Position_cameraspace;
+in vec3 Normal_cameraspace;
+in vec2 UV;
+in vec3 LightDirection_cameraspace;
+in vec4 FragPosLightSpace; 
+in float ClipHeight;
+
+// --- OUTPUT ---
+out vec4 fragmentColor;
+
+// --- UNIFORMS ---
+uniform int useTexture = 0;
+uniform sampler2D diffuseColorSampler;
+uniform sampler2D specularColorSampler;
+uniform sampler2D shadowMap; // Depth Texture
+uniform float constructionProgress;
+
+// Lighting Structs
+struct Light {
+    vec4 La;
+    vec4 Ld;
+    vec4 Ls;
+    float power;
+};
+uniform Light light;
+
+struct Material {
+    vec4 Ka;
+    vec4 Kd;
+    vec4 Ks;
+    float Ns;
+};
+uniform Material mtl;
+
+// -------------------------------------------------------
+// Shadow Calculation (Same as Standard Shader)
+// -------------------------------------------------------
+float calculateShadow(vec4 fragPosLightSpace)
+{
+    vec3 projCoords = fragPosLightSpace.xyz / fragPosLightSpace.w;
+    projCoords = projCoords * 0.5 + 0.5;
+    
+    if (projCoords.z > 1.0 ||
+        projCoords.x < 0.0 || projCoords.x > 1.0 ||
+        projCoords.y < 0.0 || projCoords.y > 1.0)
+        return 0.0;
+    
+    float currentDepth = projCoords.z;
+    
+    vec3 normal = normalize(Normal_cameraspace);
+    vec3 lightDir = normalize(LightDirection_cameraspace);
+    float cosTheta = clamp(dot(normal, lightDir), 0.0, 1.0);
+    
+    float bias = 0.00005 + (1.0 - cosTheta) * 0.0002;
+    bias = clamp(bias, 0.00001, 0.0005);
+    
+    float shadow = 0.0;
+    vec2 texelSize = 1.0 / textureSize(shadowMap, 0);
+    for (int x = -1; x <= 1; ++x)
+    {
+        for (int y = -1; y <= 1; ++y)
+        {
+            float pcfDepth = texture(shadowMap, projCoords.xy + vec2(x, y) * texelSize).r;
+            shadow += (currentDepth - bias > pcfDepth) ? 1.0 : 0.0;
+        }
+    }
+    shadow /= 9.0;
+    
+    return shadow;
+}
+
+void main()
+{
+    // 1. Construction Clipping
+    if (ClipHeight > 0.001) {
+        discard;
+    }
+   
+    float edgeFade = 1.0;
+    if (constructionProgress < 1.0 && ClipHeight > -0.5) { 
+        edgeFade = smoothstep(-0.5, 0.0, ClipHeight);
+        edgeFade = 1.0 - edgeFade; 
+    }
+
+    // 2. Material Properties
+    vec4 Ka = mtl.Ka;
+    vec4 Kd = mtl.Kd;
+    vec4 Ks = mtl.Ks;
+    float Ns = mtl.Ns;
+
+    if (useTexture == 1) {
+        Kd = vec4(texture(diffuseColorSampler, UV).rgb, 1.0);
+        Ks = vec4(texture(specularColorSampler, UV).rgb, 1.0);
+        Ka = vec4(0.1, 0.1, 0.1, 1.0);
+        Ns = 10.0;
+    }
+
+    // 3. Phong Lighting
+    vec3 N = normalize(Normal_cameraspace);
+    vec3 L = normalize(LightDirection_cameraspace);
+    vec3 E = normalize(-Position_cameraspace); // View Dir
+
+    // Ambient
+    vec3 Ia = light.La.rgb * Ka.rgb;
+    
+    // Diffuse
+    float cosTheta = clamp(dot(N, L), 0.0, 1.0);
+    vec3 Id = light.Ld.rgb * Kd.rgb * cosTheta;
+    
+    // Specular
+    vec3 R = reflect(-L, N);
+    float cosAlpha = clamp(dot(E, R), 0.0, 1.0);
+    vec3 Is = light.Ls.rgb * Ks.rgb * pow(cosAlpha, Ns);
+
+    // 4. Shadow Application
+    float shadow = calculateShadow(FragPosLightSpace);
+    
+    vec3 litRgb = Ia + (1.0 - shadow) * (Id + Is) * light.power;
+    float finalAlpha = Kd.a * edgeFade;
+
+    fragmentColor = vec4(litRgb, finalAlpha);
+}

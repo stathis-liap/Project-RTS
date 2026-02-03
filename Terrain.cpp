@@ -2,13 +2,23 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
+#include "common/texture.h" // ✅ REQUIRED: to use loadSOIL
+#include <iostream>
 
 using namespace glm;
 
 Terrain::Terrain(int width, int height, float amplitude)
     : width(width), height(height), amplitude(amplitude),
-    vao(0), vbo(0), ebo(0)
+    vao(0), vbo(0), ebo(0), textureID_(0)
 {
+    // ✅ 1. LOAD TEXTURE ONCE (Prevents Freezing)
+    // Make sure the path matches where your image actually is!
+    textureID_ = loadSOIL("models/hexagons_medieval.png");
+
+    if (textureID_ == 0) {
+        std::cout << "WARNING: Terrain texture failed to load! Using fallback." << std::endl;
+    }
+
     generate();
 }
 
@@ -89,6 +99,7 @@ void Terrain::computeNormals()
 {
     vertices.resize(width * height);
 
+    // 1. Set Positions and UVs
     for (int z = 0; z < height; ++z)
     {
         for (int x = 0; x < width; ++x)
@@ -96,9 +107,15 @@ void Terrain::computeNormals()
             float h = heightmap[z * width + x];
             vertices[z * width + x].pos = vec3(x, h, z);
             vertices[z * width + x].normal = vec3(0.0f);
+
+            // ✅ 2. CALCULATE TEXTURE COORDINATES (UVs)
+            // This maps the image across the terrain. 
+            // "0.1f" scales the texture so it repeats every 10 units (prevents it looking stretched)
+            vertices[z * width + x].texCoords = vec2(x * 0.1f, z * 0.1f);
         }
     }
 
+    // 2. Calculate Normals (Standard Logic)
     for (int z = 0; z < height - 1; ++z)
     {
         for (int x = 0; x < width - 1; ++x)
@@ -118,6 +135,7 @@ void Terrain::computeNormals()
         }
     }
 
+    // 3. Normalize
     for (auto& v : vertices)
     {
         if (length(v.normal) > 0.0001f)
@@ -156,18 +174,22 @@ void Terrain::buildMesh()
     glBindVertexArray(vao);
 
     glBindBuffer(GL_ARRAY_BUFFER, vbo);
-    glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(Vertex), vertices.data(), GL_DYNAMIC_DRAW); // ✅ Changed to DYNAMIC_DRAW
+    glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(TerrainVertex), vertices.data(), GL_DYNAMIC_DRAW); // ✅ Changed to DYNAMIC_DRAW
 
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo);
     glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices.size() * sizeof(unsigned int), indices.data(), GL_STATIC_DRAW);
 
     // position attribute
     glEnableVertexAttribArray(0);
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, pos));
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(TerrainVertex), (void*)offsetof(TerrainVertex, pos));
 
     // normal attribute
     glEnableVertexAttribArray(1);
-    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, normal));
+    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(TerrainVertex), (void*)offsetof(TerrainVertex, normal));
+
+    // ✅ 3. TEXTURE COORDINATES (Attribute 2)
+    glEnableVertexAttribArray(2);
+    glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, sizeof(TerrainVertex), (void*)offsetof(TerrainVertex, texCoords));
 
     glBindVertexArray(0);
 }
@@ -193,6 +215,13 @@ void Terrain::draw(const glm::mat4& model, GLuint shaderProgram)
     GLuint modelLoc = glGetUniformLocation(shaderProgram, "model");
     if (modelLoc != GL_INVALID_INDEX)
         glUniformMatrix4fv(modelLoc, 1, GL_FALSE, &model[0][0]);
+
+    // ✅ BIND TEXTURE
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, textureID_);
+
+    // Tell shader to use unit 0 (Optional safety, usually done in main loop)
+    glUniform1i(glGetUniformLocation(shaderProgram, "diffuseColorSampler"), 0);
 
     glBindVertexArray(vao);
     glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(indices.size()), GL_UNSIGNED_INT, 0);
@@ -260,7 +289,7 @@ void Terrain::flattenArea(const glm::vec3& center, float radius)
 
     // ✅ Update GPU buffer with new vertex data
     glBindBuffer(GL_ARRAY_BUFFER, vbo);
-    glBufferSubData(GL_ARRAY_BUFFER, 0, vertices.size() * sizeof(Vertex), vertices.data());
+    glBufferSubData(GL_ARRAY_BUFFER, 0, vertices.size() * sizeof(TerrainVertex), vertices.data());
     glBindBuffer(GL_ARRAY_BUFFER, 0);
 }
 

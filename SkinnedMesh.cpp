@@ -154,8 +154,10 @@ SkinnedMesh::SkinnedMesh(const std::string& path) {
     }
 
     m_FinalBoneMatrices.resize(250, glm::mat4(1.0f));
-    UpdateAnimation(0.0f);
+    /*UpdateAnimation(0.0f);*/
     setupMesh();
+    SetupInstancing();
+    m_FinalBoneMatrices.resize(m_BoneCounter, glm::mat4(1.0f));
 }
 
 SkinnedMesh::~SkinnedMesh() {
@@ -232,14 +234,87 @@ void SkinnedMesh::setupMesh() {
 }
 
 // ✅ ANIMATION HELPERS
-const aiNodeAnim* SkinnedMesh::FindNodeAnim(const aiAnimation* animation, const std::string& nodeName) {
+
+// In SkinnedMesh.cpp
+void SkinnedMesh::LoadAnimation(const std::string& filePath, const std::string& alias, int index) {
+    Assimp::Importer* importer = new Assimp::Importer();
+    m_AnimationImporters.push_back(importer);
+
+    const aiScene* scene = importer->ReadFile(filePath, 0);
+
+    if (!scene || !scene->mRootNode || scene->mNumAnimations == 0) {
+        std::cout << "ERROR: No animations found in " << filePath << std::endl;
+        return;
+    }
+
+    // 🔍 DEBUG: Print all animations in this file so we know which index to pick!
+    if (index == 0) { // Only print this once per file to avoid spam
+        std::cout << "--- Animations found in " << filePath << " ---" << std::endl;
+        for (unsigned int i = 0; i < scene->mNumAnimations; i++) {
+            std::cout << "   [" << i << "] " << scene->mAnimations[i]->mName.data
+                << " (Duration: " << scene->mAnimations[i]->mDuration << ")" << std::endl;
+        }
+        std::cout << "-----------------------------------------------" << std::endl;
+    }
+
+    // Safety check
+    if (index >= scene->mNumAnimations) {
+        std::cout << "ERROR: Index " << index << " is out of bounds for " << filePath << " (Max: " << scene->mNumAnimations - 1 << ")" << std::endl;
+        return;
+    }
+
+    // ✅ LOAD THE SPECIFIC INDEX
+    aiAnimation* anim = scene->mAnimations[index];
+    m_Animations[alias] = anim;
+
+    std::cout << "Loaded '" << alias << "' from Index [" << index << "] (" << anim->mName.data << ")" << std::endl;
+
+    if (!m_CurrentAnimation) {
+        m_CurrentAnimation = anim;
+    }
+}
+
+void SkinnedMesh::PlayAnimation(const std::string& animationName) {
+    /*std::cout << "DEBUG: Requesting to play animation: '" << animationName << "'" << std::endl;*/
+
+    if (m_Animations.find(animationName) != m_Animations.end()) {
+        m_CurrentAnimation = m_Animations[animationName];
+        /*std::cout << "DEBUG: SUCCESS! Switched to animation: " << animationName << std::endl;*/
+    }
+    else {
+        std::cout << "DEBUG: ERROR! Animation '" << animationName << "' not found in map!" << std::endl;
+        std::cout << "       Available animations: ";
+        for (const auto& pair : m_Animations) std::cout << "'" << pair.first << "' ";
+        std::cout << std::endl;
+    }
+}
+
+const aiNodeAnim* SkinnedMesh::FindNodeAnim(const aiAnimation* animation, const std::string& nodeName)
+{
+    // 1. Try Exact Match (Fastest)
     for (unsigned int i = 0; i < animation->mNumChannels; i++) {
         const aiNodeAnim* nodeAnim = animation->mChannels[i];
         if (std::string(nodeAnim->mNodeName.data) == nodeName) {
             return nodeAnim;
         }
     }
-    return nullptr;
+
+    // 2. Try "Smart Search" (Matches suffixes)
+    // Example: If Node is "hips", this finds "Rig_Medium_hips" or "mixamorig:hips"
+    for (unsigned int i = 0; i < animation->mNumChannels; i++) {
+        const aiNodeAnim* nodeAnim = animation->mChannels[i];
+        std::string animBoneName(nodeAnim->mNodeName.data);
+
+        // Check if the animation bone ends with the node name
+        // (e.g. "Rig_Medium_hips" ends with "hips")
+        if (animBoneName.length() >= nodeName.length()) {
+            if (animBoneName.compare(animBoneName.length() - nodeName.length(), nodeName.length(), nodeName) == 0) {
+                return nodeAnim;
+            }
+        }
+    }
+
+    return nullptr; // No match found
 }
 
 glm::vec3 SkinnedMesh::InterpolatePosition(float animationTime, const aiNodeAnim* nodeAnim) {
@@ -310,22 +385,31 @@ void SkinnedMesh::ReadNodeHierarchy(float animationTime, const aiNode* pNode, co
     std::string nodeName(pNode->mName.data);
     glm::mat4 nodeTransform = ConvertMatrix(pNode->mTransformation);
 
-    // Apply Animation if exists
-    if (m_Scene->HasAnimations()) {
-        const aiAnimation* animation = m_Scene->mAnimations[0];
+    // ✅ FIX: Use 'm_CurrentAnimation' (External File) instead of 'm_Scene' (Mesh File)
+    if (m_CurrentAnimation) {
+        const aiAnimation* animation = m_CurrentAnimation;
         const aiNodeAnim* nodeAnim = FindNodeAnim(animation, nodeName);
 
-        // Mixamo Prefix Fix
+        // Mixamo/Synty Prefix Fix (Handles cases like "mixamorig:Hips" vs "Hips")
         if (!nodeAnim) {
             std::string cleanName = nodeName;
-            size_t colonPos = cleanName.find(':');
-            if (colonPos != std::string::npos) {
-                cleanName = cleanName.substr(colonPos + 1);
+            // 1. Try removing "Rig_Medium" prefix (Common in Synty)
+            if (cleanName.find("Rig_Medium_") != std::string::npos) {
+                cleanName = cleanName.substr(11); // Remove first 11 chars
                 nodeAnim = FindNodeAnim(animation, cleanName);
+            }
+            // 2. Try removing colon prefix (Common in Mixamo)
+            if (!nodeAnim) {
+                size_t colonPos = nodeName.find(':');
+                if (colonPos != std::string::npos) {
+                    cleanName = nodeName.substr(colonPos + 1);
+                    nodeAnim = FindNodeAnim(animation, cleanName);
+                }
             }
         }
 
         if (nodeAnim) {
+            // Interpolate matrices
             glm::vec3 position = InterpolatePosition(animationTime, nodeAnim);
             glm::quat rotation = InterpolateRotation(animationTime, nodeAnim);
             glm::vec3 scale = InterpolateScale(animationTime, nodeAnim);
@@ -338,15 +422,13 @@ void SkinnedMesh::ReadNodeHierarchy(float animationTime, const aiNode* pNode, co
         }
     }
 
-    // ======================= 🦒 NECK EXTENDER FIX 🦒 =======================
-    // This manually moves the head bone UP, separating it from the torso.
+    // ======================= 🦒 NECK FIX 🦒 =======================
+    // Keep this if you need the head offset
     if (nodeName == "head" || nodeName == "Head") {
-        float neckHeight = 1.25f; // Value from your previous setting
-
-        // Translate UP on the Y-axis relative to the parent bone
+        float neckHeight = 1.25f;
         nodeTransform = glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, neckHeight, 0.0f)) * nodeTransform;
     }
-    // =======================================================================
+    // ===============================================================
 
     glm::mat4 globalTransform = parentTransform * nodeTransform;
 
@@ -364,21 +446,96 @@ void SkinnedMesh::ReadNodeHierarchy(float animationTime, const aiNode* pNode, co
 }
 
 void SkinnedMesh::UpdateAnimation(float timeInSeconds) {
-    ReadNodeHierarchy(0.0f, m_Scene->mRootNode, glm::mat4(1.0f));
+    if (!m_CurrentAnimation) return;
 
-    if (!m_Scene->HasAnimations()) return;
+    // --- DEBUG: RUN THIS ONCE TO SEE THE NAMES ---
+    static bool debugNamesPrinted = false;
+    if (!debugNamesPrinted) {
+        std::cout << "\n========== ANIMATION DEBUGGER ==========" << std::endl;
+        std::cout << "Animation Name: " << m_CurrentAnimation->mName.data << std::endl;
+        std::cout << "Animation Channels (" << m_CurrentAnimation->mNumChannels << "):" << std::endl;
+        for (unsigned int i = 0; i < m_CurrentAnimation->mNumChannels; i++) {
+            std::cout << "   [" << i << "] AnimBone: '" << m_CurrentAnimation->mChannels[i]->mNodeName.data << "'" << std::endl;
+        }
 
-    const aiAnimation* animation = m_Scene->mAnimations[0];
-    float ticksPerSecond = (float)(animation->mTicksPerSecond != 0 ? animation->mTicksPerSecond : 25.0f);
-    float timeInTicks = timeInSeconds * ticksPerSecond;
-    float animationTime = fmod(timeInTicks, (float)animation->mDuration);
+        std::cout << "\nMesh Bone Map (" << m_BoneInfoMap.size() << " bones):" << std::endl;
+        for (const auto& pair : m_BoneInfoMap) {
+            std::cout << "   ID " << pair.second.id << ": '" << pair.first << "'" << std::endl;
+        }
+        std::cout << "========================================\n" << std::endl;
+        debugNamesPrinted = true;
+    }
+    // ---------------------------------------------
 
-    ReadNodeHierarchy(animationTime, m_Scene->mRootNode, glm::mat4(1.0f));
+    float TicksPerSecond = m_CurrentAnimation->mTicksPerSecond != 0 ? m_CurrentAnimation->mTicksPerSecond : 25.0f;
+    float TimeInTicks = timeInSeconds * TicksPerSecond;
+    float AnimationTime = fmod(TimeInTicks, m_CurrentAnimation->mDuration);
+
+    if (m_Scene && m_Scene->mRootNode) {
+        ReadNodeHierarchy(AnimationTime, m_Scene->mRootNode, glm::mat4(1.0f));
+    }
 }
 
 void SkinnedMesh::Draw(GLuint shaderProgram) {
     if (indices.empty()) return;
     glBindVertexArray(VAO);
     glDrawElements(GL_TRIANGLES, static_cast<unsigned int>(indices.size()), GL_UNSIGNED_INT, 0);
+    glBindVertexArray(0);
+}
+
+void SkinnedMesh::SetupInstancing()
+{
+    // 1. Generate the Instance Buffer
+    glGenBuffers(1, &instanceVBO);
+    glBindBuffer(GL_ARRAY_BUFFER, instanceVBO);
+    // Initialize with 0 size, we will fill it in DrawInstanced
+    glBufferData(GL_ARRAY_BUFFER, 0, nullptr, GL_DYNAMIC_DRAW);
+
+    // 2. Bind the existing VAO to enable attributes on it
+    glBindVertexArray(VAO);
+
+    // 3. Set up Attribute Pointers for the Matrix (mat4 = 4 x vec4)
+    // Locations 5, 6, 7, 8 match the shader layout
+    std::size_t vec4Size = sizeof(glm::vec4);
+
+    glEnableVertexAttribArray(5);
+    glVertexAttribPointer(5, 4, GL_FLOAT, GL_FALSE, 4 * vec4Size, (void*)0);
+
+    glEnableVertexAttribArray(6);
+    glVertexAttribPointer(6, 4, GL_FLOAT, GL_FALSE, 4 * vec4Size, (void*)(1 * vec4Size));
+
+    glEnableVertexAttribArray(7);
+    glVertexAttribPointer(7, 4, GL_FLOAT, GL_FALSE, 4 * vec4Size, (void*)(2 * vec4Size));
+
+    glEnableVertexAttribArray(8);
+    glVertexAttribPointer(8, 4, GL_FLOAT, GL_FALSE, 4 * vec4Size, (void*)(3 * vec4Size));
+
+    // 4. Set Divisors (Tell OpenGL to update these once per Instance, not per Vertex)
+    glVertexAttribDivisor(5, 1);
+    glVertexAttribDivisor(6, 1);
+    glVertexAttribDivisor(7, 1);
+    glVertexAttribDivisor(8, 1);
+
+    // Unbind
+    glBindVertexArray(0);
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+}
+
+void SkinnedMesh::DrawInstanced(GLuint shaderProgram, const std::vector<glm::mat4>& models)
+{
+    if (models.empty()) return;
+
+    // 1. Update Instance Buffer (using the variable 'instanceVBO' from your header)
+    glBindBuffer(GL_ARRAY_BUFFER, instanceVBO);
+    glBufferData(GL_ARRAY_BUFFER, models.size() * sizeof(glm::mat4), &models[0], GL_DYNAMIC_DRAW);
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+
+    // 2. Bind the Single VAO
+    glBindVertexArray(VAO);
+
+    // 3. Draw using the 'indices' vector size
+    glDrawElementsInstanced(GL_TRIANGLES, (GLsizei)indices.size(), GL_UNSIGNED_INT, 0, (GLsizei)models.size());
+
+    // 4. Cleanup
     glBindVertexArray(0);
 }

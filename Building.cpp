@@ -3,10 +3,11 @@
 #include <iostream>
 #include <fstream>
 #include <stdexcept>
+#include "Unit.h" // Need this to know about UnitType enum
 
-Building::Building(BuildingType type, const glm::vec3& pos, const std::string& meshPath)
-    : type_(type), position_(pos), mesh_(nullptr),
-    currentHealth_(0.0f), buildProgress_(0.0f), isConstructed_(false)
+Building::Building(BuildingType type, const glm::vec3& pos, int teamID, const std::string& meshPath)
+    : type_(type), position_(pos), teamID_(teamID), mesh_(nullptr),
+    currentHealth_(100.0f), buildProgress_(0.0f), isConstructed_(false)
 {
     // ✅ Initialize stats first
     initializeStats();
@@ -125,19 +126,28 @@ void Building::initializeStats()
 }
 
 void Building::draw(const glm::mat4& view, const glm::mat4& projection,
-    GLuint shaderProgram, float passedAlpha)
+    GLuint shaderProgram, float passedAlpha, glm::vec3 tint)
 {
     // -----------------------------------------------------------
-    // 1. SETUP (Scale & Matrix) - Keep your existing working code
+    // 1. SETUP (Scale & Matrix)
     // -----------------------------------------------------------
     float scale = 1.0f;
-    if (type_ == BuildingType::TOWN_CENTER) scale = 10.0f; 
+    if (type_ == BuildingType::TOWN_CENTER) scale = 10.0f;
     else if (type_ == BuildingType::BARRACKS) scale = 10.0f;
     else scale = 10.0f;
 
     glm::mat4 model = glm::mat4(1.0f);
+
+    // 1. Move to World Position
     model = glm::translate(model, basePosition_);
-    model = glm::translate(model, glm::vec3(0.0f, 0.0f * scale, 0.0f)); // Sit on ground
+
+    // 2. ✅ ROTATE 180 DEGREES (Add this line)
+    model = glm::rotate(model, glm::radians(160.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+
+    // 3. Sit on ground offset (if needed)
+    model = glm::translate(model, glm::vec3(0.0f, 0.0f * scale, 0.0f));
+
+    // 4. Apply Scale
     model = glm::scale(model, glm::vec3(scale));
 
     // Send Matrices
@@ -175,16 +185,16 @@ void Building::draw(const glm::mat4& view, const glm::mat4& projection,
     // -----------------------------------------------------------
     // 3. SEND UNIFORMS
     // -----------------------------------------------------------
-    
-    // Send Transparency
+
+    // Send Transparency & Color
     GLuint kdLoc = glGetUniformLocation(shaderProgram, "mtl.Kd");
     if (kdLoc != -1) {
-        // Use a neutral grey/white color, modified by our calculated alpha
-        glUniform4f(kdLoc, 0.8f, 0.8f, 0.8f, finalAlpha);
+        // ✅ USE THE TINT COLOR HERE
+        glUniform4f(kdLoc, tint.r, tint.g, tint.b, finalAlpha);
     }
 
-    // Send Clipping Data
-    float worldHeight = (2.0f * scale) + 50.0f; 
+    // ... (Keep the rest of uniform sending & mesh drawing) ...
+    float worldHeight = (2.0f * scale) + 50.0f;
     glm::vec3 basePos = basePosition_;
 
     glUniform1f(glGetUniformLocation(shaderProgram, "constructionProgress"), clipProgress);
@@ -249,6 +259,38 @@ ResourceCost Building::getStaticCost(BuildingType type) {
     case BuildingType::SHOOTING_RANGE: return { 100, 75 };
     default: return { 0, 0 };
     }
+}
+
+// ----------------------------------------------------------------------
+// AUTO SPAWNING LOGIC
+// ----------------------------------------------------------------------
+
+UnitType Building::updateAutoSpawning(float dt)
+{
+    // 1. Only spawn if fully constructed, alive, AND below cap
+    if (!isConstructed_ || currentHealth_ <= 0.0f) return (UnitType)-1;
+
+    if (spawnedCount_ >= MAX_UNIT_CAP) return (UnitType)-1; // ✅ STOP if cap reached
+
+    // 2. Advance Timer
+    autoSpawnTimer_ += dt;
+
+    // 3. Trigger Spawn
+    if (autoSpawnTimer_ >= SPAWN_INTERVAL) {
+        autoSpawnTimer_ = 0.0f;
+
+        // ✅ Increment Counter
+        spawnedCount_++;
+
+        switch (type_) {
+        case BuildingType::TOWN_CENTER: return UnitType::WORKER;
+        case BuildingType::BARRACKS:    return UnitType::MELEE;
+        case BuildingType::SHOOTING_RANGE: return UnitType::RANGED;
+        default: return (UnitType)-1;
+        }
+    }
+
+    return (UnitType)-1;
 }
 
 // ✅ Get building height (for clipping calculations)

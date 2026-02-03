@@ -7,10 +7,14 @@
 #include "Resource.h"
 #include "Environment.h"
 
+// ✅ 1. Forward Declarations
 class NavigationGrid;
+class Building; // <--- ADD THIS so Unit knows Building exists
 
 enum class UnitType { WORKER, MELEE, RANGED };
-enum class UnitState { IDLE, MOVING, GATHERING, ATTACKING };
+
+// ✅ 2. Add the new State
+enum class UnitState { IDLE, MOVING, GATHERING, ATTACKING, ATTACKING_BUILDING };
 
 class Unit {
 public:
@@ -22,6 +26,14 @@ public:
 
     void draw(const glm::mat4& view, const glm::mat4& projection, GLuint shaderProgram, float currentTime);
 
+    // ✅ FIX 1: Add Getter
+    UnitType getType() const { return type_; }
+
+    // ✅ FIX 2: Expose Meshes publicly so Main can use them
+    static SkinnedMesh* minionMesh;
+    static SkinnedMesh* warriorMesh;
+    static SkinnedMesh* mageMesh;
+
     // Movement
     void setPath(const std::vector<glm::vec3>& newPath);
     void setSelected(bool s) { selected_ = s; }
@@ -32,36 +44,49 @@ public:
     void assignGatherTask(int obstacleID);
     bool hasStaminaForTask(int cost) const { return currentStamina_ >= cost; }
     float getStamina() const { return currentStamina_; }
+    glm::vec3 getVelocity() const { return velocity_; }
+    // ✅ NEW: Assigns a list of resources, but randomizes the order
+    void assignGatherQueue(const std::vector<int>& resourceIDs);
 
-    // ✅ FIX: Update clearTasks to use targetID_
     void clearTasks() {
         taskQueue_.clear();
         m_HasTarget = false;
         state_ = UnitState::IDLE;
-        targetID_ = -1;       // <--- FIXED (was targetUnit_ = nullptr)
-        attackQueue_.clear(); // <--- FIXED (Clear the attack list too)
+        targetID_ = -1;
+        attackQueue_.clear();
+        targetBuilding_ = nullptr; // ✅ Clear building target too
     }
 
     // Combat Logic
     void assignAttackTask(Unit* enemy);
-    void assignAttackQueue(const std::vector<Unit*>& enemies); // New Queue function
+    void assignAttackQueue(const std::vector<Unit*>& enemies);
+    float repathTimer_ = 0.0f;
+
+    // ✅ 3. Declare the Building Attack Function
+    void assignAttackTask(Building* building);
+
     void takeDamage(int dmg);
     bool isDead() const { return currentHealth_ <= 0; }
     int getTeam() const { return teamID_; }
     bool isAttacking() const { return state_ == UnitState::ATTACKING; }
+    bool isAttackingBuilding() const { return state_ == UnitState::ATTACKING_BUILDING; }
     bool isGathering() const { return state_ == UnitState::GATHERING; }
 
-    // ✅ ID System
     int getID() const { return id_; }
+    UnitState getState() const { return state_; }
 
 private:
     static int NextID;
     int id_;
 
-    // ✅ ID-Based Targeting
+    // Combat Variables
     int targetID_ = -1;
     std::deque<int> attackQueue_;
 
+    // ✅ 4. Declare the Building Target Pointer
+    Building* targetBuilding_ = nullptr;
+
+    // Standard Variables
     UnitType type_;
     int teamID_;
 
@@ -70,15 +95,25 @@ private:
     SkinnedMesh* mesh_;
     bool selected_ = false;
 
+    // Movement Path
     std::vector<glm::vec3> m_Path;
     bool m_HasTarget = false;
+
+    // State
     UnitState state_ = UnitState::IDLE;
 
+    // Flocking Weights
+    float separationWeight_ = 20.0f;
+    float alignmentWeight_ = 5.0f;
+    float cohesionWeight_ = 1.0f;
+
+    // Worker Stats
     float currentStamina_ = 100.0f;
     std::deque<int> taskQueue_;
     int currentTargetID_ = -1;
     float gatherTimer_ = 0.0f;
 
+    // Combat Stats
     int maxHealth_;
     int currentHealth_;
     int damage_;

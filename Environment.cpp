@@ -81,7 +81,7 @@ void Environment::initialize(Terrain* terrain, float mapSize, int numObjects) {
             m_Obstacles.push_back({
                 obstacleIDCounter++,
                 glm::vec3(x, y, z),
-                2.0f,
+                5.0f,
                 ObstacleType::TREE,
                 100,
                 true,   // Active
@@ -98,7 +98,7 @@ void Environment::initialize(Terrain* terrain, float mapSize, int numObjects) {
             m_Obstacles.push_back({
                 obstacleIDCounter++,
                 glm::vec3(x, y, z),
-                3.0f,
+                4.0f,
                 ObstacleType::ROCK,
                 100,
                 true,
@@ -110,20 +110,68 @@ void Environment::initialize(Terrain* terrain, float mapSize, int numObjects) {
     }
 }
 
-void Environment::draw(GLuint shaderProgram, GLuint modelMatrixLocation) {
+// ✅ Update signature in Environment.cpp
+int Environment::draw(GLuint shaderProgram, GLuint modelMatrixLocation, const Frustum& frustum) {
+    int drawnCount = 0;
+
+    // Ensure we are operating on Texture Unit 0 (Standard Shader expects this)
+    glActiveTexture(GL_TEXTURE0);
+
+    // ---------------------------------------------------------
     // 1. Draw Decorative Objects (Border Rocks)
-    for (const auto& obj : natureObjects) {
-        if (!obj.mesh) continue;
-        glUniformMatrix4fv(modelMatrixLocation, 1, GL_FALSE, &obj.modelMatrix[0][0]);
-        obj.mesh->draw();
+    // ---------------------------------------------------------
+    // Assumption: All border objects are Rocks.
+    // Optimization: Bind the Rock texture once before the loop.
+    if (m_rockTexture != 0) {
+        glBindTexture(GL_TEXTURE_2D, m_rockTexture);
     }
 
-    // 2. Draw Interactive Objects (Trees/Rocks)
-    // ✅ ONLY DRAW IF ACTIVE
+    for (const auto& obj : natureObjects) {
+        if (!obj.mesh) continue;
+
+        // Optional: Add Frustum check for border rocks too if FPS is low
+        // if (!frustum.isSphereVisible(obj.position, 10.0f)) continue;
+
+        glUniformMatrix4fv(modelMatrixLocation, 1, GL_FALSE, &obj.modelMatrix[0][0]);
+        obj.mesh->draw();
+        drawnCount++;
+    }
+
+    // ---------------------------------------------------------
+    // 2. Draw Interactive Objects (Trees & Rocks)
+    // ---------------------------------------------------------
+    // Since the vector mixes Trees and Rocks, we check the type and switch textures.
+
+    // Keep track of currently bound texture to avoid useless API calls
+    GLuint currentTexture = m_rockTexture;
+
     for (const auto& obs : m_Obstacles) {
-        if (obs.active && obs.mesh) {
+        // Skip dead or invalid objects
+        if (!obs.active || !obs.mesh) continue;
+
+        // Frustum Culling
+        if (frustum.isSphereVisible(obs.position, obs.radius + 1.0f)) {
+
+            // ✅ TEXTURE SWITCHING LOGIC
+            if (obs.type == ObstacleType::TREE) {
+                if (currentTexture != m_treeTexture) {
+                    glBindTexture(GL_TEXTURE_2D, m_treeTexture);
+                    currentTexture = m_treeTexture;
+                }
+            }
+            else if (obs.type == ObstacleType::ROCK) {
+                if (currentTexture != m_rockTexture) {
+                    glBindTexture(GL_TEXTURE_2D, m_rockTexture);
+                    currentTexture = m_rockTexture;
+                }
+            }
+
+            // Draw Mesh
             glUniformMatrix4fv(modelMatrixLocation, 1, GL_FALSE, &obs.modelMatrix[0][0]);
             obs.mesh->draw();
+            drawnCount++;
         }
     }
+
+    return drawnCount; // ✅ Return the total visible objects
 }

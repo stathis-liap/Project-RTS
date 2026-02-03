@@ -6,6 +6,7 @@
 #include <GL/glew.h>
 #include "Mesh.h"
 #include "Terrain.h" 
+#include "Frustum.h"
 
 // Simple structure to hold an instance of an object
 struct EnvObject {
@@ -64,10 +65,16 @@ public:
         return nullptr;
     }
 
+    // ✅ NEW: Setter for textures
+    void setTextures(GLuint treeTex, GLuint rockTex) {
+        m_treeTexture = treeTex;
+        m_rockTexture = rockTex;
+    }
+
     // Draws all environment objects
     // shaderProgram: The shader to use (Standard or Shadow)
     // modelLoc: The uniform location for "M" or "model"
-    void draw(GLuint shaderProgram, GLuint modelMatrixLocation);
+    int draw(GLuint shaderProgram, GLuint modelMatrixLocation, const Frustum& frustum);
 
     // Frees GPU resources
     void cleanup();
@@ -81,6 +88,9 @@ private:
     Mesh* treeMesh;
     Mesh* rockMesh;
     Mesh* boulderMesh;
+
+    GLuint m_treeTexture = 0;
+    GLuint m_rockTexture = 0;
 
     // Helper for random generation
     float randomFloat(float min, float max);

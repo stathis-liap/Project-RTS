@@ -11,10 +11,12 @@
 #include <common/shader.h>
 #include <common/util.h>
 #include <common/camera.h>
+#include "common/texture.h"
+
 #include <glm/gtc/type_ptr.hpp> 
+
 #include "Terrain.h"
 #include "ShadowMap.h"
-#include "Mesh.h"
 #include "SnowTrailMap.h"
 #include "Building.h"
 #include <vector>
@@ -25,6 +27,7 @@
 #include "SkinnedMesh.h"
 #include "Pathfinder.h"
 #include "NavigationGrid.h"
+#include "Frustum.h"
 
 // ---------------------------------------------------------------
 using namespace std;
@@ -49,11 +52,27 @@ GLuint shadowMapTexUnit = 5;
 bool showDepthMap = false;
 GLuint shadowMapLoc_standard = 0;
 GLuint lightSpaceMatrixLoc_standard = 0;
+GLuint instancedShader = 0;
+
+Frustum cameraFrustum;
 
 Environment* environment = nullptr;
 
 SkinnedMesh* myActor = nullptr;
 GLuint skinnedShader = 0;
+
+GLuint texWorker = 0;
+GLuint texWarrior = 0;
+GLuint texMage = 0;
+
+// Building Textures
+GLuint texTownCenter = 0;
+GLuint texBarracks = 0;
+GLuint texArchery = 0;
+
+// Nature Textures (We will pass these to Environment later)
+GLuint texTree = 0;
+GLuint texRock = 0;
 
 GLuint whiteShader = 0;
 
@@ -91,8 +110,10 @@ struct Material {
     float Ns;
 };
 const Material defaultMaterial{
-    vec4{0.1f,0.1f,0.1f,1}, vec4{1.0f,0.8f,0.0f,1},
-    vec4{0.3f,0.3f,0.3f,1}, 20.0f
+    vec4{0.1f,0.1f,0.1f,1},
+    vec4{1.0f,1.0f,1.0f,1.0f}, 
+    vec4{0.3f,0.3f,0.3f,1},
+    20.0f
 };
 Light light{
     vec4{0.2f,0.2f,0.2f,1},
@@ -104,6 +125,7 @@ Light light{
 Terrain* terrain = nullptr;
 std::vector<std::unique_ptr<Building>> buildings;
 bool placingBuilding = false;
+bool isPlacementValid = false;
 BuildingType currentPlaceType = BuildingType::TOWN_CENTER;
 std::unique_ptr<Building> previewBuilding = nullptr;
 std::vector<std::unique_ptr<Unit>> units;
@@ -181,27 +203,24 @@ void createContext()
     // Terrain shader
 
     terrainShader = loadShaders("terrain.vertexshader", "terrain.fragmentshader");
-
-
     terrain = new Terrain(512, 512, 1.05f);
 
 
     // Create environment
-
     environment = new Environment();
 
     // Note: If Terrain doesn't have getHeight(), pass nullptr or update Terrain class
     navGrid = new NavigationGrid(512, 512);
 
     environment->initialize(terrain, 512.0f, 1500);
-
+    environment->setTextures(texTree, texRock);
 
     shadowShader = loadShaders("ShadowMap.vertexshader", "ShadowMap.fragmentshader");
 
-    shadowMap = new ShadowMap(2048, 2048);
+    shadowMap = new ShadowMap(4096, 4096);
 
 
-    snowTrailMap = new SnowTrailMap(1024, 1024);
+    snowTrailMap = new SnowTrailMap(2048, 2048);
 
     snowTrailMap->clear(); // ← FULL SNOW at start
 
@@ -215,8 +234,8 @@ void createContext()
     whiteShader = loadShaders("White.vertexshader", "White.fragmentshader");
 
 
-    skinnedShader = loadShaders("SkinnedShading.vertexshader", "SkinnedShading.fragmentshader");
-
+    //skinnedShader = loadShaders("SkinnedShading.vertexshader", "SkinnedShading.fragmentshader");
+    instancedShader = loadShaders("SkinnedInstanced.vertexshader", "SkinnedInstanced.fragmentshader");
 
     // Debug quad
 
@@ -285,14 +304,11 @@ void createContext()
 
 
     // Starting content
-
-
-
     vec3 myTownCenterPos = vec3(50.0f, 0.0f, 50.0f);
 
     terrain->flattenArea(myTownCenterPos, 15.0f);  // ✅ Flatten first
 
-    buildings.push_back(std::make_unique<Building>(BuildingType::TOWN_CENTER, myTownCenterPos));
+    buildings.push_back(std::make_unique<Building>(BuildingType::TOWN_CENTER, myTownCenterPos,0));
 
     buildings.back()->updateConstruction(10000.0f);
 
@@ -301,7 +317,7 @@ void createContext()
 
     terrain->flattenArea(enemyTownCenterPos, 15.0f);  // ✅ Flatten first
 
-    buildings.push_back(std::make_unique<Building>(BuildingType::TOWN_CENTER, enemyTownCenterPos));
+    buildings.push_back(std::make_unique<Building>(BuildingType::TOWN_CENTER, enemyTownCenterPos,1));
 
     buildings.back()->updateConstruction(10000.0f);
 
@@ -309,48 +325,94 @@ void createContext()
     // Old way:
     // units.push_back(std::make_unique<Unit>(UnitType::WORKER, vec3(260.0f, 0.0f, 260.0f)));
 
-    // ✅ New Safe Way: Check grid before spawning
-    vec3 workerPos(260.0f, 0.0f, 260.0f);
-    vec3 warriorPos(245.0f, 0.0f, 245.0f);
-    vec3 magePos(230.0f, 0.0f, 230.0f);
+    // ---------------------------------------------------------
+    // PERFORMANCE TEST: MASSIVE ARMY SPAWNER
+    // ---------------------------------------------------------
 
-    // If blocked, search for a valid spot
-    if (navGrid->isBlocked((int)workerPos.x, (int)workerPos.z)) {
-        vec3 safePos = Pathfinder::findNearestWalkable((int)workerPos.x, (int)workerPos.z, navGrid);
-        if (safePos.x != -1.0f) workerPos = safePos;
-    }
-    units.push_back(std::make_unique<Unit>(UnitType::WORKER, workerPos, 0));
 
-    if (navGrid->isBlocked((int)warriorPos.x, (int)warriorPos.z)) {
-        vec3 safePos = Pathfinder::findNearestWalkable((int)warriorPos.x, (int)warriorPos.z, navGrid);
-        if (safePos.x != -1.0f) warriorPos = safePos;
-    }
-    units.push_back(std::make_unique<Unit>(UnitType::MELEE, warriorPos, 0));
+    // Army 1: Player (Green/Team 0)
+    //int rows = 10;
+    //int cols = 10; // 10 * 10 = 100 Units
+    //float spacing = 2.5f;
+    //vec3 startPosPlayer(220.0f, 0.0f, 220.0f);
 
-    if (navGrid->isBlocked((int)magePos.x, (int)magePos.z)) {
-        vec3 safePos = Pathfinder::findNearestWalkable((int)magePos.x, (int)magePos.z, navGrid);
-        if (safePos.x != -1.0f) magePos = safePos;
-    }
-    units.push_back(std::make_unique<Unit>(UnitType::RANGED, magePos, 0));
+    //for (int i = 0; i < rows; ++i) {
+    //    for (int j = 0; j < cols; ++j) {
+    //        float x = startPosPlayer.x + (j * spacing);
+    //        float z = startPosPlayer.z + (i * spacing);
 
-    units.push_back(std::make_unique<Unit>(UnitType::MELEE, vec3(300, 0, 300), 1));
-    units.push_back(std::make_unique<Unit>(UnitType::RANGED, vec3(310, 0, 310), 1));
-    units.push_back(std::make_unique<Unit>(UnitType::WORKER, vec3(300, 0, 300), 1));
+    //        // Mix up unit types for variety
+    //        UnitType type;
+    //        int r = (i + j) % 3;
+    //        if (r == 0) type = UnitType::MELEE;
+    //        else if (r == 1) type = UnitType::RANGED;
+    //        else type = UnitType::WORKER;
+
+    //        // Optional: Check grid to avoid spawning inside rocks
+    //        if (navGrid && !navGrid->isBlocked((int)x, (int)z)) {
+    //            units.push_back(std::make_unique<Unit>(type, vec3(x, 0.0f, z), 0));
+    //        }
+    //    }
+    //}
+
+    //// Army 2: Enemy (Red/Team 1)
+    //vec3 startPosEnemy(300.0f, 0.0f, 300.0f);
+
+    //for (int i = 0; i < rows; ++i) {
+    //    for (int j = 0; j < cols; ++j) {
+    //        float x = startPosEnemy.x + (j * spacing);
+    //        float z = startPosEnemy.z + (i * spacing);
+
+    //        UnitType type;
+    //        int r = (i + j) % 3;
+    //        if (r == 0) type = UnitType::MELEE;
+    //        else if (r == 1) type = UnitType::RANGED;
+    //        else type = UnitType::WORKER;
+
+    //        if (navGrid && !navGrid->isBlocked((int)x, (int)z)) {
+    //            units.push_back(std::make_unique<Unit>(type, vec3(x, 0.0f, z), 1));
+    //        }
+    //    }
+    //}
+
+    //std::cout << "--- PERFORMANCE TEST STARTED ---" << std::endl;
+    //std::cout << "Total Units Spawned: " << units.size() << std::endl;
    
 
-    // 3. BAKE STATIC OBSTACLES (Trees/Rocks)
-    // We iterate the environment obstacles once and mark them on the grid
+// 3. BAKE STATIC OBSTACLES (Trees/Rocks)
     const std::vector<Obstacle>& envObstacles = environment->getObstacles();
     for (const auto& obs : envObstacles) {
-        // Mark as BLOCKED (true)
         navGrid->updateArea(obs.position, obs.radius, true);
     }
 
     // 4. BAKE BUILDINGS
-    // (If you have starting buildings)
     for (const auto& b : buildings) {
         float r = (b->getType() == BuildingType::TOWN_CENTER) ? 12.0f : 8.0f;
         navGrid->updateArea(b->getPosition(), r, true);
+    }
+
+    // =========================================================
+    // 5. BAKE MAP BORDERS (Invisible Walls)
+    // =========================================================
+    // This ensures units never walk into the edge rocks or off the map
+    int mapSize = 512;
+    int borderThickness = 30; // Width of the rock border
+
+    // We loop through the grid pixels directly for 100% accuracy
+    for (int x = 0; x < mapSize; x++) {
+        for (int z = 0; z < mapSize; z++) {
+
+            // If we are close to ANY edge (Left, Right, Top, Bottom)
+            if (x < borderThickness || x >= mapSize - borderThickness ||
+                z < borderThickness || z >= mapSize - borderThickness) {
+
+                // Mark as BLOCKED manually
+                // (We assume your NavGrid has a helper or we access the grid directly)
+                // If you don't have setBlocked(x,z), use updateArea with radius 0.5
+
+                navGrid->updateArea(glm::vec3(x, 0, z), 0.5f, true);
+            }
+        }
     }
 
 
@@ -485,28 +547,48 @@ void handleInput() {
         // =========================================================
         else if (currentMode == InputMode::RESOURCE_SELECT) {
             std::vector<Unit*> workers;
-            for (auto& u : units) if (u->isSelected()) workers.push_back(u.get());
+            for (auto& u : units) {
+                if (u->isSelected() && u->getType() == UnitType::WORKER) {
+                    workers.push_back(u.get());
+                }
+            }
 
             if (!workers.empty()) {
                 auto& allObs = environment->getObstacles();
+
+                // 1. Collect ALL selected resources first
+                std::vector<int> targetResources;
+
                 for (auto& obs : allObs) {
                     if (!obs.active) continue;
+
                     bool inBox = false;
                     if (isClick) {
-                        if (distance(obs.position, dragEndWorld) < obs.radius + 1.0f) inBox = true;
+                        // Click selection (Radius check)
+                        if (glm::distance(obs.position, dragEndWorld) < obs.radius + 1.0f) inBox = true;
                     }
                     else {
-                        vec2 sPos = worldToScreen(obs.position, V, P);
+                        // Box selection (Screen space check)
+                        glm::vec2 sPos = worldToScreen(obs.position, V, P);
                         if (sPos.x >= minX && sPos.x <= maxX && sPos.y >= minY && sPos.y <= maxY) inBox = true;
                     }
 
-                    if (inBox && !obs.marked) {
-                        obs.marked = true;
-                        for (auto* w : workers) w->assignGatherTask(obs.id);
+                    if (inBox) {
+                        obs.marked = true; // Visual feedback
+                        targetResources.push_back(obs.id); // Add ID to list
                     }
                 }
+
+                // 2. Assign the list to workers (They will shuffle it internally)
+                if (!targetResources.empty()) {
+                    for (auto* w : workers) {
+                        w->assignGatherQueue(targetResources);
+                    }
+                    std::cout << "Assigned " << targetResources.size() << " resources to " << workers.size() << " workers." << std::endl;
+                }
             }
-            // Auto-switch back to normal mode after issuing command
+
+            // Auto-switch back to normal mode
             currentMode = InputMode::UNIT_SELECT;
         }
         // =========================================================
@@ -517,15 +599,17 @@ void handleInput() {
             for (auto& u : units) if (u->isSelected() && u->getTeam() == 0) myUnits.push_back(u.get());
 
             if (!myUnits.empty()) {
-                std::vector<Unit*> enemyTargets;
                 vec3 clickPos = dragEndWorld;
+                bool commandIssued = false;
 
-                // Find enemies in the box/click
+                // ---------------------------------------------
+                // 1. Check for Enemy UNITS
+                // ---------------------------------------------
+                std::vector<Unit*> enemyTargets;
                 for (auto& u : units) {
                     if (u->getTeam() == 1) { // Is Enemy
                         bool targeted = false;
                         if (isClick) {
-                            // Use larger radius (10.0f) for easier clicking
                             if (distance(u->getPosition(), clickPos) < 10.0f) targeted = true;
                         }
                         else {
@@ -537,28 +621,46 @@ void handleInput() {
                 }
 
                 if (!enemyTargets.empty()) {
-                    std::cout << "Command: ATTACK (" << enemyTargets.size() << " enemies queued)" << std::endl;
-
-                    // SMART QUEUEING: Each soldier creates a sorted list of targets based on distance
+                    //std::cout << "Command: ATTACK UNITS (" << enemyTargets.size() << " enemies queued)" << std::endl;
+                    commandIssued = true;
+                    // SMART QUEUEING (Units)
                     for (auto* myUnit : myUnits) {
-
-                        // Create a copy of the target list to sort for THIS specific unit
                         std::vector<Unit*> sortedTargets = enemyTargets;
-
-                        // Sort: Closest enemies first
                         std::sort(sortedTargets.begin(), sortedTargets.end(),
                             [myUnit](Unit* a, Unit* b) {
                                 float distA = glm::distance(myUnit->getPosition(), a->getPosition());
                                 float distB = glm::distance(myUnit->getPosition(), b->getPosition());
                                 return distA < distB;
                             });
-
-                        // Send the sorted list to the unit's queue
                         myUnit->assignAttackQueue(sortedTargets);
                     }
                 }
-                else {
-                    std::cout << "Attack command cancelled (No enemies clicked)" << std::endl;
+
+                // ---------------------------------------------
+                // 2. Check for Enemy BUILDINGS (If no units clicked)
+                // ---------------------------------------------
+                if (!commandIssued && isClick) {
+                    for (const auto& b : buildings) {
+                        // Check if Enemy (Team 1)
+                        if (b->getTeam() == 1) {
+                            // Hitbox check (Radius approx 15-20)
+                            float dist = glm::distance(clickPos, b->getPosition());
+                            if (dist < 20.0f) {
+                                std::cout << "Command: ATTACK BUILDING!" << std::endl;
+                                commandIssued = true;
+
+                                // Order all selected units to attack this building
+                                for (auto* myUnit : myUnits) {
+                                    myUnit->assignAttackTask(b.get());
+                                }
+                                break; // Target found
+                            }
+                        }
+                    }
+                }
+
+                if (!commandIssued) {
+                    std::cout << "Attack command cancelled (No targets clicked)" << std::endl;
                 }
             }
             // Reset cursor to normal after command
@@ -590,30 +692,48 @@ void handleInput() {
         for (auto& u : units) if (u->isSelected() && u->getTeam() == 0) myUnits.push_back(u.get());
 
         if (!myUnits.empty()) {
-            // Right click is ALWAYS a move command (or cancel)
-            std::cout << "Command: Move" << std::endl;
-            for (auto* u : myUnits) u->clearTasks();
+            std::cout << "Command: Move (Shared Path + Formation)" << std::endl;
 
-            // Unmark resources
+            // 1. Calculate Group Center
+            vec3 groupCenter(0.0f);
+            for (auto* u : myUnits) groupCenter += u->getPosition();
+            groupCenter /= (float)myUnits.size();
+
+            // 2. Calculate ONE path from Center -> Mouse Click
+            std::vector<vec3> sharedPath = Pathfinder::findPath(groupCenter, clickPos, navGrid);
+
+            // 3. Assign path, but give each unit a unique END POINT
+            int count = myUnits.size();
+            float spacing = 3.0f;
+
+            for (int i = 0; i < count; i++) {
+                // Calculate Formation Offset (Spiral)
+                float radius = spacing * std::sqrt(i);
+                float angle = i * 2.4f;
+                vec3 offset(cos(angle) * radius, 0.0f, sin(angle) * radius);
+
+                // Copy the shared path
+                std::vector<vec3> myPersonalPath = sharedPath;
+
+                // ✅ KEY FIX: Change the LAST point to be their unique spot
+                if (!myPersonalPath.empty()) {
+                    myPersonalPath.back() = clickPos + offset;
+                }
+                else {
+                    // If path was empty (very close), just push the single point
+                    myPersonalPath.push_back(clickPos + offset);
+                }
+
+                myUnits[i]->clearTasks();
+                myUnits[i]->setPath(myPersonalPath);
+            }
+
+            // Visual cleanup
             auto& allObs = environment->getObstacles();
             for (auto& o : allObs) o.marked = false;
 
-            // Formation Move
-            int count = myUnits.size();
-            float spacing = 3.5f;
-            for (int i = 0; i < count; i++) {
-                float radius = spacing * std::sqrt(i + 1);
-                float angle = i * 2.4f;
-                vec3 offset(cos(angle) * radius, 0.0f, sin(angle) * radius);
-                vec3 unitTarget = clickPos + offset;
-
-                std::vector<vec3> path = Pathfinder::findPath(myUnits[i]->getPosition(), unitTarget, navGrid);
-                myUnits[i]->setPath(path);
-            }
-            // If we were in attack mode, right click cancels it
             if (currentMode != InputMode::UNIT_SELECT) {
                 currentMode = InputMode::UNIT_SELECT;
-                std::cout << ">>> MODE: UNIT SELECTION (Cancelled) <<<" << std::endl;
             }
         }
     }
@@ -709,20 +829,17 @@ void drawSelectionRings(mat4 V, mat4 P) {
     glMatrixMode(GL_MODELVIEW);
     glLoadMatrixf(&V[0][0]);
 
+    // ---------------------------------------------------------
+    // 1. Rings for SELECTED UNITS (Status Colors)
+    // ---------------------------------------------------------
     for (const auto& u : units) {
         if (u->isSelected()) {
             vec3 pos = u->getPosition();
 
-            // ✅ DYNAMIC COLOR LOGIC
-            if (u->isGathering()) {
-                glColor3f(1.0f, 1.0f, 0.0f); // Yellow (Working)
-            }
-            else if (u->isAttacking()) {
-                glColor3f(1.0f, 0.0f, 0.0f); // Red (Fighting)
-            }
-            else {
-                glColor3f(0.0f, 1.0f, 0.0f); // Green (Idle/Moving)
-            }
+            // Dynamic Color Logic
+            if (u->isGathering()) glColor3f(1.0f, 1.0f, 0.0f);      // Yellow (Working)
+            else if (u->isAttacking() || u->isAttackingBuilding()) glColor3f(1.0f, 0.0f, 0.0f); // Red (Fighting)
+            else glColor3f(0.0f, 1.0f, 0.0f);                       // Green (Idle)
 
             glLineWidth(2.0f);
             glBegin(GL_LINE_LOOP);
@@ -736,6 +853,52 @@ void drawSelectionRings(mat4 V, mat4 P) {
             glEnd();
         }
     }
+
+    // ---------------------------------------------------------
+    // 2. Rings for TARGETS (When in Attack Mode)
+    // ---------------------------------------------------------
+    if (currentMode == InputMode::ATTACK_SELECT) {
+
+        // A. Enemy Units
+        for (const auto& u : units) {
+            if (u->getTeam() == 1) { // Enemy
+                vec3 pos = u->getPosition();
+                glColor3f(1.0f, 0.0f, 0.0f); // Red Ring
+                glLineWidth(2.0f);
+                glBegin(GL_LINE_LOOP);
+                float r = 3.0f;
+                for (int i = 0; i < 16; i++) {
+                    float theta = 2.0f * 3.14159f * float(i) / 16.0f;
+                    float x = r * cosf(theta);
+                    float z = r * sinf(theta);
+                    glVertex3f(pos.x + x, pos.y + 0.5f, pos.z + z);
+                }
+                glEnd();
+            }
+        }
+
+        // ✅ B. Enemy Buildings (NEW)
+        for (const auto& b : buildings) {
+            if (b->getTeam() == 1) { // Enemy Building
+                vec3 pos = b->getPosition();
+                glColor3f(1.0f, 0.0f, 0.0f); // Red Ring
+                glLineWidth(3.0f);           // Thicker for buildings
+                glBegin(GL_LINE_LOOP);
+
+                // Larger Radius for buildings (matches Town Center size roughly)
+                float r = 18.0f;
+
+                for (int i = 0; i < 32; i++) {
+                    float theta = 2.0f * 3.14159f * float(i) / 32.0f;
+                    float x = r * cosf(theta);
+                    float z = r * sinf(theta);
+                    glVertex3f(pos.x + x, pos.y + 1.0f, pos.z + z);
+                }
+                glEnd();
+            }
+        }
+    }
+
     glEnable(GL_DEPTH_TEST);
 }
 
@@ -786,87 +949,172 @@ void updateBuildingPlacement()
     bool key2 = glfwGetKey(window, GLFW_KEY_2) == GLFW_PRESS;
     bool key3 = glfwGetKey(window, GLFW_KEY_3) == GLFW_PRESS;
 
+    // -----------------------------------------------------------
+    // 1. DETERMINE RADIUS (Move this up so we can use it for checking)
+    // -----------------------------------------------------------
+    // We need to know the size BEFORE we click to check collisions.
+    float buildingRadius = 12.0f;
+    if (currentPlaceType == BuildingType::TOWN_CENTER) buildingRadius = 15.0f;
+    else if (currentPlaceType == BuildingType::BARRACKS) buildingRadius = 12.0f;
+    else if (currentPlaceType == BuildingType::SHOOTING_RANGE) buildingRadius = 10.0f;
+
+    // -----------------------------------------------------------
+    // 2. START PLACEMENT
+    // -----------------------------------------------------------
     if (key1 && !last1) {
         placingBuilding = true;
         currentPlaceType = BuildingType::TOWN_CENTER;
         vec3 pos = getWorldPosUnderCursor();
         pos.y = 0.0f;
-        previewBuilding = std::make_unique<Building>(currentPlaceType, pos);
+        previewBuilding = std::make_unique<Building>(currentPlaceType, pos, 0);
     }
     if (key2 && !last2) {
         placingBuilding = true;
         currentPlaceType = BuildingType::BARRACKS;
         vec3 pos = getWorldPosUnderCursor();
         pos.y = 0.0f;
-        previewBuilding = std::make_unique<Building>(currentPlaceType, pos);
+        previewBuilding = std::make_unique<Building>(currentPlaceType, pos, 0);
     }
     if (key3 && !last3) {
         placingBuilding = true;
         currentPlaceType = BuildingType::SHOOTING_RANGE;
         vec3 pos = getWorldPosUnderCursor();
         pos.y = 0.0f;
-        previewBuilding = std::make_unique<Building>(currentPlaceType, pos);
+        previewBuilding = std::make_unique<Building>(currentPlaceType, pos, 0);
     }
     last1 = key1; last2 = key2; last3 = key3;
+
+    // -----------------------------------------------------------
+    // 3. CHECK VALIDITY & UPDATE PREVIEW
+    // -----------------------------------------------------------
+
+    // Default to false (safety)
+    isPlacementValid = false;
 
     if (placingBuilding && previewBuilding) {
         vec3 pos = getWorldPosUnderCursor();
         pos.y = 0.0f;
         previewBuilding->setPosition(pos);
+
+        // Calculate Radius (matches your building types)
+        float buildingRadius = 12.0f;
+        if (currentPlaceType == BuildingType::TOWN_CENTER) buildingRadius = 15.0f;
+        else if (currentPlaceType == BuildingType::BARRACKS) buildingRadius = 12.0f;
+        else if (currentPlaceType == BuildingType::SHOOTING_RANGE) buildingRadius = 10.0f;
+
+        // ✅ VALIDITY CHECK LOOP
+        // Assume valid until we hit a block
+        bool valid = true;
+
+        if (navGrid) {
+            int range = (int)buildingRadius;
+
+            for (int x = -range; x <= range; x += 2) {
+                for (int z = -range; z <= range; z += 2) {
+
+                    // Circular check
+                    if (glm::length(glm::vec2(x, z)) > buildingRadius) continue;
+
+                    int gridX = (int)pos.x + x;
+                    int gridZ = (int)pos.z + z;
+
+                    // Check Bounds & Collisions
+                    if (gridX < 0 || gridX >= 512 || gridZ < 0 || gridZ >= 512 ||
+                        navGrid->isBlocked(gridX, gridZ)) {
+                        valid = false;
+                        break;
+                    }
+                }
+                if (!valid) break;
+            }
+        }
+
+        // ✅ Update the global variable for the renderer to see
+        isPlacementValid = valid;
     }
 
+    // -----------------------------------------------------------
+    // 4. CONFIRM PLACEMENT (Left Click)
+    // -----------------------------------------------------------
     static bool lastClick = false;
     bool clicked = glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS;
+
     if (clicked && !lastClick && placingBuilding) {
-        ResourceCost cost = Building::getStaticCost(currentPlaceType);
-        if (playerResources.spend(cost.wood, cost.rock)) {
-            vec3 pos = getWorldPosUnderCursor();
-            pos.y = 0.0f;
-            float buildingRadius;
-            if (currentPlaceType == BuildingType::TOWN_CENTER) buildingRadius = 15.0f;
-            else if (currentPlaceType == BuildingType::BARRACKS) buildingRadius = 12.0f;
-            else if (currentPlaceType == BuildingType::SHOOTING_RANGE) buildingRadius = 10.0f;
-            else buildingRadius = 12.0f;
 
-            terrain->flattenArea(pos, buildingRadius);
-            buildings.push_back(std::make_unique<Building>(currentPlaceType, pos));
-
-            if (navGrid) {
-                navGrid->updateArea(pos, buildingRadius, true);
-                std::cout << "Map updated: Blocked area at " << pos.x << ", " << pos.z << std::endl;
-            }
-
-            placingBuilding = false;
-            previewBuilding = nullptr;
+        // ✅ BLOCK PLACEMENT IF INVALID
+        if (!isPlacementValid) {
+            std::cout << "Cannot place here: Area blocked!" << std::endl;
         }
         else {
-            std::cout << "Not enough resources." << std::endl;
-            placingBuilding = false;
-            previewBuilding = nullptr;
+            ResourceCost cost = Building::getStaticCost(currentPlaceType);
+
+            if (playerResources.spend(cost.wood, cost.rock)) {
+                vec3 pos = previewBuilding->getPosition();
+
+                // Determine radius again (or just reuse logic)
+                float r = (currentPlaceType == BuildingType::TOWN_CENTER) ? 15.0f : 12.0f;
+
+                terrain->flattenArea(pos, r);
+
+                // Create the real building
+                buildings.push_back(std::make_unique<Building>(currentPlaceType, pos, 0));
+
+                if (navGrid) {
+                    navGrid->updateArea(pos, r, true);
+                }
+
+                placingBuilding = false;
+                previewBuilding = nullptr;
+            }
+            else {
+                std::cout << "Not enough resources." << std::endl;
+            }
         }
     }
+
+    // Right Click Cancel
+    if (glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS) {
+        placingBuilding = false;
+        previewBuilding = nullptr;
+    }
+
     lastClick = clicked;
 }
 
 void drawBuildingUI()
 {
+    // -----------------------------------------------------------
+    // SAFETY BLOCK (Crucial for 2D UI)
+    // -----------------------------------------------------------
     glDisable(GL_DEPTH_TEST);
+    glDisable(GL_CULL_FACE);  // <--- The likely fix for "Black Box"
+    glDisable(GL_LIGHTING);
+    glDisable(GL_TEXTURE_2D); // <--- The likely fix for "Black Texture"
+
     glUseProgram(0);
 
     mat4 P = camera->projectionMatrix;
     mat4 V = camera->viewMatrix;
 
     for (const auto& b : buildings) {
-        vec3 buildingPos = b->getPosition();
-        vec4 clipPos = P * V * vec4(buildingPos, 1.0f);
+
+        float offsetHeight = 40.0f;
+        const float barWidth = 80.0f;
+        const float barHeight = 15.0f;
+        const float constructionRadius = 20.0f;
+
+        vec3 worldPos = b->getPosition();
+        worldPos.y += offsetHeight;
+
+        vec4 clipPos = P * V * vec4(worldPos, 1.0f);
         if (clipPos.w <= 0.0f) continue;
 
         vec3 ndc = vec3(clipPos) / clipPos.w;
         float screenX = (ndc.x + 1.0f) * 0.5f * W_WIDTH;
         float screenY = (1.0f - ndc.y) * 0.5f * W_HEIGHT;
 
-        if (screenX < -100 || screenX > W_WIDTH + 100 ||
-            screenY < -100 || screenY > W_HEIGHT + 100) continue;
+        if (screenX < -150 || screenX > W_WIDTH + 150 ||
+            screenY < -150 || screenY > W_HEIGHT + 150) continue;
 
         glMatrixMode(GL_PROJECTION);
         glPushMatrix();
@@ -876,18 +1124,16 @@ void drawBuildingUI()
         glPushMatrix();
         glLoadIdentity();
 
-        const float radius = 40.0f;
-        const float barWidth = 80.0f;
-        const float barHeight = 8.0f;
-
+        // DRAW CONSTRUCTION
         if (!b->isConstructed()) {
             float progress = b->getBuildProgress();
+
             glColor4f(0.2f, 0.2f, 0.2f, 0.7f);
             glBegin(GL_TRIANGLE_FAN);
             glVertex2f(screenX, screenY);
             for (int i = 0; i <= 32; ++i) {
                 float angle = (i / 32.0f) * 2.0f * 3.14159f;
-                glVertex2f(screenX + cos(angle) * radius, screenY + sin(angle) * radius);
+                glVertex2f(screenX + cos(angle) * constructionRadius, screenY + sin(angle) * constructionRadius);
             }
             glEnd();
 
@@ -897,31 +1143,47 @@ void drawBuildingUI()
             int segments = static_cast<int>(32 * progress);
             for (int i = 0; i <= segments; ++i) {
                 float angle = (i / 32.0f) * 2.0f * 3.14159f - 3.14159f / 2.0f;
-                glVertex2f(screenX + cos(angle) * radius, screenY + sin(angle) * radius);
+                glVertex2f(screenX + cos(angle) * constructionRadius, screenY + sin(angle) * constructionRadius);
             }
             glEnd();
         }
 
+        // DRAW HEALTH BAR
         if (b->isConstructed() && b->getCurrentHealth() < b->getMaxHealth()) {
-            float healthPercent = b->getCurrentHealth() / b->getMaxHealth();
-            float barY = screenY - 60.0f;
 
-            glColor4f(0.3f, 0.0f, 0.0f, 0.7f);
+            float healthPercent = b->getCurrentHealth() / b->getMaxHealth();
+            if (healthPercent < 0) healthPercent = 0; // Safety clamp
+
+            vec3 hpColor(0.0f, 1.0f, 0.0f); // Green
+            if (healthPercent < 0.5f) hpColor = vec3(1.0f, 1.0f, 0.0f); // Yellow
+            if (healthPercent < 0.25f) hpColor = vec3(1.0f, 0.0f, 0.0f); // Red
+
+            // Background (Dark)
+            glColor4f(0.2f, 0.0f, 0.0f, 0.8f);
             glBegin(GL_QUADS);
-            glVertex2f(screenX - barWidth / 2, barY);
-            glVertex2f(screenX + barWidth / 2, barY);
-            glVertex2f(screenX + barWidth / 2, barY + barHeight);
-            glVertex2f(screenX - barWidth / 2, barY + barHeight);
+            glVertex2f(screenX - barWidth / 2, screenY);
+            glVertex2f(screenX + barWidth / 2, screenY);
+            glVertex2f(screenX + barWidth / 2, screenY + barHeight);
+            glVertex2f(screenX - barWidth / 2, screenY + barHeight);
             glEnd();
 
-            float r = 1.0f - healthPercent;
-            float g = healthPercent;
-            glColor4f(r, g, 0.0f, 0.9f);
+            // Foreground (HP)
+            glColor4f(hpColor.r, hpColor.g, hpColor.b, 1.0f);
             glBegin(GL_QUADS);
-            glVertex2f(screenX - barWidth / 2, barY);
-            glVertex2f(screenX - barWidth / 2 + barWidth * healthPercent, barY);
-            glVertex2f(screenX - barWidth / 2 + barWidth * healthPercent, barY + barHeight);
-            glVertex2f(screenX - barWidth / 2, barY + barHeight);
+            glVertex2f(screenX - barWidth / 2, screenY);
+            glVertex2f(screenX - barWidth / 2 + barWidth * healthPercent, screenY);
+            glVertex2f(screenX - barWidth / 2 + barWidth * healthPercent, screenY + barHeight);
+            glVertex2f(screenX - barWidth / 2, screenY + barHeight);
+            glEnd();
+
+            // Border
+            glLineWidth(2.0f);
+            glColor4f(0.0f, 0.0f, 0.0f, 1.0f);
+            glBegin(GL_LINE_LOOP);
+            glVertex2f(screenX - barWidth / 2, screenY);
+            glVertex2f(screenX + barWidth / 2, screenY);
+            glVertex2f(screenX + barWidth / 2, screenY + barHeight);
+            glVertex2f(screenX - barWidth / 2, screenY + barHeight);
             glEnd();
         }
 
@@ -929,7 +1191,10 @@ void drawBuildingUI()
         glMatrixMode(GL_PROJECTION);
         glPopMatrix();
     }
+
+    // RESTORE STATE
     glEnable(GL_DEPTH_TEST);
+    glEnable(GL_CULL_FACE); // Turn back on for 3D objects
 }
 
 void drawCursor()
@@ -984,6 +1249,31 @@ void initialize()
     // ✅ MOUSE MUST BE NORMAL FOR RTS
     glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
 
+    // --- BUILDINGS ---
+    texTownCenter = loadSOIL("models/hexagons_medieval.png"); // Check your file names!
+    texBarracks = loadSOIL("models/hexagons_medieval.png");
+    texArchery = loadSOIL("models/hexagons_medieval.png");
+
+    // --- NATURE ---
+    texTree = loadSOIL("models/hexagons_medieval.png");
+    texRock = loadSOIL("models/hexagons_medieval.png");
+
+    if (texTownCenter == 0) std::cout << "FAILED to load texTownCenter texture!" << std::endl;
+    if (texBarracks == 0) std::cout << "FAILED to load texBarracks texture!" << std::endl;
+    if (texArchery == 0) std::cout << "FAILED to load texArchery texture!" << std::endl;
+    if (texTree == 0) std::cout << "FAILED to load texTree texture!" << std::endl;
+    if (texRock == 0) std::cout << "FAILED to load texRock texture!" << std::endl;
+
+
+    texWorker = loadSOIL("models/skeleton_texture.png");  
+    texWarrior = loadSOIL("models/skeleton_texture.png"); 
+    texMage = loadSOIL("models/skeleton_texture.png");    
+
+    // Error checking
+    if (texWorker == 0) std::cout << "FAILED to load Worker texture!" << std::endl;
+    if (texWarrior == 0) std::cout << "FAILED to load Warrior texture!" << std::endl;
+    if (texMage == 0) std::cout << "FAILED to load Mage texture!" << std::endl;
+
     camera = new Camera(window);
     glClearColor(0.5f, 0.5f, 0.5f, 0.0f);
     glEnable(GL_DEPTH_TEST);
@@ -991,16 +1281,59 @@ void initialize()
     glEnable(GL_CULL_FACE);
     glEnable(GL_PROGRAM_POINT_SIZE);
     logGLParameters();
+
+    // =========================================================
+    // ✅ LOAD ANIMATIONS HERE
+    // =========================================================
+    std::cout << "--- Loading Unit Meshes & Animations ---" << std::endl;
+
+    // 1. Initialize the Base Meshes (The "Skin")
+    // Ensure "models/minion_mesh.fbx" exists! (Or whatever your base mesh is named)
+    if (!Unit::minionMesh)  Unit::minionMesh = new SkinnedMesh("models/Skeleton_Minion.fbx");
+    if (!Unit::warriorMesh) Unit::warriorMesh = new SkinnedMesh("models/Skeleton_Warrior.fbx"); // Reusing for now
+    if (!Unit::mageMesh)    Unit::mageMesh = new SkinnedMesh("models/Skeleton_Mage.fbx"); // Reusing for now
+
+    // 2. Load External Animations (The "Moves")
+    // Adjust the path string if your folder structure is different.
+
+    // --- WORKER ANIMATIONS ---
+    // General.fbx: [7] is "Idle_A"
+    Unit::minionMesh->LoadAnimation("models/Animations/Rig_Medium_General.fbx", "IDLE", 7);
+    // Movement.fbx: [8] is "Walking_A"
+    Unit::minionMesh->LoadAnimation("models/Animations/Rig_Medium_MovementBasic.fbx", "WALK", 8);
+    // Melee.fbx: [1] is "Melee_1H_Attack_Chop" (Good for workers)
+    Unit::minionMesh->LoadAnimation("models/Animations/Rig_Medium_CombatMelee.fbx", "ATTACK", 1);
+
+    Unit::minionMesh->PlayAnimation("IDLE"); // Set default
+
+    // --- WARRIOR ANIMATIONS ---
+    Unit::warriorMesh->LoadAnimation("models/Animations/Rig_Medium_General.fbx", "IDLE", 7);
+    Unit::warriorMesh->LoadAnimation("models/Animations/Rig_Medium_MovementBasic.fbx", "WALK", 8);
+    // Melee.fbx: [5] is "Melee_1H_Attack_Stab" (Good for swords)
+    Unit::warriorMesh->LoadAnimation("models/Animations/Rig_Medium_CombatMelee.fbx", "ATTACK", 5);
+
+    Unit::warriorMesh->PlayAnimation("IDLE");
+
+    // --- MAGE ANIMATIONS ---
+    Unit::mageMesh->LoadAnimation("models/Animations/Rig_Medium_General.fbx", "IDLE", 7);
+    Unit::mageMesh->LoadAnimation("models/Animations/Rig_Medium_MovementBasic.fbx", "WALK", 8);
+    // Ranged.fbx: [16] is "Ranged_Magic_Shoot" (Perfect for Mages)
+    Unit::mageMesh->LoadAnimation("models/Animations/Rig_Medium_CombatRanged.fbx", "SHOOT", 16);
+
+    Unit::mageMesh->PlayAnimation("IDLE");
+
+    std::cout << "--- Animations Loaded ---" << std::endl;
+
 }
 
 void mainLoop() {
     float lastTime = static_cast<float>(glfwGetTime());
-    const float cycleSpeed = 0.5f;
+    const float cycleSpeed = 0.002f;
 
     static bool showDepthMap = false;
     static bool lastF1 = false;
 
-    static float unitCameraAngle = 3.14159f; // Start facing unit back
+    static float unitCameraAngle = 0; // Start facing unit front
 
     do {
         float currentTime = static_cast<float>(glfwGetTime());
@@ -1013,7 +1346,7 @@ void mainLoop() {
         light.dir = normalize(vec3(
             sin(angle),
             cos(angle) * cos(tiltAngle),
-            cos(angle) * sin(tiltAngle)
+            cos(angle+3.14) * sin(tiltAngle)
         ));
 
         float elevation = light.dir.y;
@@ -1058,6 +1391,64 @@ void mainLoop() {
         mat4 P = camera->projectionMatrix;
         mat4 V = camera->viewMatrix;
 
+        cameraFrustum.update(P * V); // Combine Projection and View
+
+        // 2. Prepare Batches (Separate by Type AND Animation)
+         // --- WORKERS ---
+        std::vector<glm::mat4> worker_IDLE, worker_WALK, worker_ATTACK;
+        // --- WARRIORS ---
+        std::vector<glm::mat4> warrior_IDLE, warrior_WALK, warrior_ATTACK;
+        // --- MAGES ---
+        std::vector<glm::mat4> mage_IDLE, mage_WALK, mage_ATTACK;
+
+        // 3. Collection Loop
+        for (const auto& u : units) {
+            if (!cameraFrustum.isSphereVisible(u->getPosition(), 3.0f)) continue;
+
+            glm::mat4 model = glm::translate(glm::mat4(1.0f), u->getPosition());
+
+            // Rotation
+            glm::vec3 vel = u->getVelocity();
+            if (glm::length(vel) > 0.1f) {
+                glm::vec3 direction = glm::normalize(vel);
+                float angle = atan2(direction.x, direction.z);
+                model = glm::rotate(model, angle, glm::vec3(0.0f, 1.0f, 0.0f));
+            }
+            float scaleVal = 3.0f;
+            model = glm::scale(model, glm::vec3(scaleVal));
+
+            // --- SORTING LOGIC ---
+            // 1. Determine Animation State for this unit
+            int animState = 0; // 0=IDLE, 1=WALK, 2=ATTACK
+
+            if (u->getState() == UnitState::ATTACKING || u->getState() == UnitState::ATTACKING_BUILDING || u->getState() == UnitState::GATHERING) {
+                animState = 2; // ATTACK
+            }
+            else if (glm::length(vel) > 0.1f) {
+                animState = 1; // WALK
+            }
+            else {
+                animState = 0; // IDLE
+            }
+
+            // 2. Push to correct Batch
+            if (u->getType() == UnitType::WORKER) {
+                if (animState == 2) worker_ATTACK.push_back(model);
+                else if (animState == 1) worker_WALK.push_back(model);
+                else worker_IDLE.push_back(model);
+            }
+            else if (u->getType() == UnitType::MELEE) {
+                if (animState == 2) warrior_ATTACK.push_back(model);
+                else if (animState == 1) warrior_WALK.push_back(model);
+                else warrior_IDLE.push_back(model);
+            }
+            else if (u->getType() == UnitType::RANGED) {
+                if (animState == 2) mage_ATTACK.push_back(model);
+                else if (animState == 1) mage_WALK.push_back(model);
+                else mage_IDLE.push_back(model);
+            }
+        }
+
         // C. Camera Override (Unit Camera)
         if (unitCameraMode && focusedUnit) {
             
@@ -1098,8 +1489,85 @@ void mainLoop() {
         for (auto& u : units) {
             u->update(dt, terrain, units, playerResources, environment, navGrid);
         }
+        
+
+        // -------------------------------------------------------
+                // UPDATE BUILDINGS & AUTO-SPAWN (With Spiral Formation)
+                // -------------------------------------------------------
         for (auto& b : buildings) {
             b->updateConstruction(dt);
+
+            UnitType typeToSpawn = b->updateAutoSpawning(dt);
+
+            if ((int)typeToSpawn != -1) {
+
+                // --- 1. Define Rally Point (In Front of Building) ---
+                glm::vec3 buildingPos = b->getPosition();
+
+                // ✅ Calculate "Front" Vector based on Building Rotation (160 degrees)
+                // We convert 160 degrees to radians to get the direction the door is facing.
+                float rotationRadians = glm::radians(160.0f);
+
+                // Assuming the mesh's natural forward is +Z (common for assets)
+                // We rotate the vector (0,0,1) by 160 degrees.
+                float dirX = sin(rotationRadians);
+                float dirZ = cos(rotationRadians);
+
+                glm::vec3 forwardDir(dirX, 0.0f, dirZ);
+
+                // Move the center 30 units out along that direction
+                glm::vec3 rallyCenter = buildingPos + (forwardDir * 10.0f);
+
+                // --- 2. Calculate Spiral Offset ---
+                // Use the number of units spawned so far (1 to 10) as the index 'i'
+                int i = b->getSpawnedCount();
+                float spacing = 3.0f; // Space between units
+
+                // The Spiral Formula:
+                float radius = spacing * std::sqrt(i);
+                float angle = i * 2.4f; // Golden Angle for nice packing
+
+                // Offset relative to the Rally Center
+                glm::vec3 offset(cos(angle) * radius, 0.0f, sin(angle) * radius);
+
+                // Final Target Position
+                glm::vec3 spawnPos = rallyCenter + offset;
+
+                // --- 3. Validate Position ---
+                // Ensure we don't spawn inside a rock or tree
+                if (navGrid && navGrid->isBlocked((int)spawnPos.x, (int)spawnPos.z)) {
+                    spawnPos = Pathfinder::findNearestWalkable((int)spawnPos.x, (int)spawnPos.z, navGrid);
+                }
+
+                // --- 4. Spawn Unit ---
+                if (spawnPos.x != -1.0f) {
+                    auto newUnit = std::make_unique<Unit>(typeToSpawn, spawnPos, b->getTeam());
+
+                    // Optional: Make them physically look away from the building initially
+                    // newUnit->setRotation(160.0f); 
+
+                    units.push_back(std::move(newUnit));
+                }
+            }
+        }
+
+        // -------------------------------------------------------
+        // REMOVE DEAD BUILDINGS
+        // -------------------------------------------------------
+        auto it = buildings.begin();
+        while (it != buildings.end()) {
+            if ((*it)->isDead()) {
+                // Unblock Grid
+                float r = ((*it)->getType() == BuildingType::TOWN_CENTER) ? 12.0f : 8.0f;
+                if (navGrid) {
+                    navGrid->updateArea((*it)->getPosition(), r, false);
+                }
+                std::cout << "Building Destroyed!" << std::endl;
+                it = buildings.erase(it);
+            }
+            else {
+                ++it;
+            }
         }
 
         // -------------------------------------------
@@ -1162,31 +1630,139 @@ void mainLoop() {
         glDepthFunc(GL_LESS);
         glClear(GL_DEPTH_BUFFER_BIT);
 
+        // We render the BACK faces of objects into the shadow map.
+        // This prevents acne without shrinking the shadow (Peter Panning).
+        // 
+        glCullFace(GL_FRONT);
+
+        // ✅ We can now DISABLE the offset entirely!
+        glDisable(GL_POLYGON_OFFSET_FILL);
+
+        // A. STATIC OBJECTS (Terrain, Trees, Buildings) -> Use Standard Shadow Shader
         glUseProgram(shadowShader);
         glUniformMatrix4fv(glGetUniformLocation(shadowShader, "lightSpaceMatrix"), 1, GL_FALSE, &lightSpaceMatrix[0][0]);
-        glEnable(GL_POLYGON_OFFSET_FILL);
-        glPolygonOffset(0.5f, 0.5f);
 
+        // 1. Terrain
         mat4 model = mat4(1.0f);
         glUniformMatrix4fv(glGetUniformLocation(shadowShader, "model"), 1, GL_FALSE, &model[0][0]);
         terrain->draw(model, shadowShader);
 
+        // 2. Environment (Trees/Rocks)
         GLint modelLocShadow = glGetUniformLocation(shadowShader, "model");
-        environment->draw(shadowShader, modelLocShadow);
+        environment->draw(shadowShader, modelLocShadow, cameraFrustum);
 
+        // 3. Buildings
         for (const auto& b : buildings) {
             mat4 model = translate(mat4(1.0f), b->getPosition());
+
+            // ✅ ROTATE 180 DEGREES (Add this line)
+            model = glm::rotate(model, glm::radians(160.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+
             float scale = (b->getType() == BuildingType::TOWN_CENTER) ? 10.0f : ((b->getType() == BuildingType::BARRACKS) ? 7.0f : 5.0f);
             model = glm::scale(model, vec3(scale));
+
             glUniformMatrix4fv(glGetUniformLocation(shadowShader, "model"), 1, GL_FALSE, &model[0][0]);
             b->getMesh()->draw();
         }
 
-        for (const auto& u : units) {
-            u->draw(lightView, lightProjection, shadowShader, glfwGetTime());
+        // B. ANIMATED UNITS -> Use Instanced Shader (Handles Bones!)
+        glUseProgram(instancedShader);
+
+        // Pass "Sun" matrices so the shader draws from the light's perspective
+        glUniformMatrix4fv(glGetUniformLocation(instancedShader, "P"), 1, GL_FALSE, &lightProjection[0][0]);
+        glUniformMatrix4fv(glGetUniformLocation(instancedShader, "V"), 1, GL_FALSE, &lightView[0][0]);
+
+        // Optimization: Disable color writing (Shadow map only needs Depth)
+        glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
+
+        // ============================
+        // WORKERS (SHADOWS)
+        // ============================
+        if (Unit::minionMesh) {
+            // IDLE
+            if (!worker_IDLE.empty()) {
+                Unit::minionMesh->PlayAnimation("IDLE");
+                Unit::minionMesh->UpdateAnimation(glfwGetTime());
+                auto bones = Unit::minionMesh->GetFinalBoneMatrices();
+                for (int i = 0; i < bones.size(); i++) glUniformMatrix4fv(glGetUniformLocation(instancedShader, ("finalBonesMatrices[" + std::to_string(i) + "]").c_str()), 1, GL_FALSE, &bones[i][0][0]);
+                Unit::minionMesh->DrawInstanced(instancedShader, worker_IDLE);
+            }
+            // WALK
+            if (!worker_WALK.empty()) {
+                Unit::minionMesh->PlayAnimation("WALK");
+                Unit::minionMesh->UpdateAnimation(glfwGetTime());
+                auto bones = Unit::minionMesh->GetFinalBoneMatrices();
+                for (int i = 0; i < bones.size(); i++) glUniformMatrix4fv(glGetUniformLocation(instancedShader, ("finalBonesMatrices[" + std::to_string(i) + "]").c_str()), 1, GL_FALSE, &bones[i][0][0]);
+                Unit::minionMesh->DrawInstanced(instancedShader, worker_WALK);
+            }
+            // ATTACK
+            if (!worker_ATTACK.empty()) {
+                Unit::minionMesh->PlayAnimation("ATTACK");
+                Unit::minionMesh->UpdateAnimation(glfwGetTime());
+                auto bones = Unit::minionMesh->GetFinalBoneMatrices();
+                for (int i = 0; i < bones.size(); i++) glUniformMatrix4fv(glGetUniformLocation(instancedShader, ("finalBonesMatrices[" + std::to_string(i) + "]").c_str()), 1, GL_FALSE, &bones[i][0][0]);
+                Unit::minionMesh->DrawInstanced(instancedShader, worker_ATTACK);
+            }
         }
 
-        glDisable(GL_POLYGON_OFFSET_FILL);
+        // ============================
+        // WARRIORS (SHADOWS)
+        // ============================
+        if (Unit::warriorMesh) {
+            if (!warrior_IDLE.empty()) {
+                Unit::warriorMesh->PlayAnimation("IDLE");
+                Unit::warriorMesh->UpdateAnimation(glfwGetTime());
+                auto bones = Unit::warriorMesh->GetFinalBoneMatrices();
+                for (int i = 0; i < bones.size(); i++) glUniformMatrix4fv(glGetUniformLocation(instancedShader, ("finalBonesMatrices[" + std::to_string(i) + "]").c_str()), 1, GL_FALSE, &bones[i][0][0]);
+                Unit::warriorMesh->DrawInstanced(instancedShader, warrior_IDLE);
+            }
+            if (!warrior_WALK.empty()) {
+                Unit::warriorMesh->PlayAnimation("WALK");
+                Unit::warriorMesh->UpdateAnimation(glfwGetTime());
+                auto bones = Unit::warriorMesh->GetFinalBoneMatrices();
+                for (int i = 0; i < bones.size(); i++) glUniformMatrix4fv(glGetUniformLocation(instancedShader, ("finalBonesMatrices[" + std::to_string(i) + "]").c_str()), 1, GL_FALSE, &bones[i][0][0]);
+                Unit::warriorMesh->DrawInstanced(instancedShader, warrior_WALK);
+            }
+            if (!warrior_ATTACK.empty()) {
+                Unit::warriorMesh->PlayAnimation("ATTACK");
+                Unit::warriorMesh->UpdateAnimation(glfwGetTime());
+                auto bones = Unit::warriorMesh->GetFinalBoneMatrices();
+                for (int i = 0; i < bones.size(); i++) glUniformMatrix4fv(glGetUniformLocation(instancedShader, ("finalBonesMatrices[" + std::to_string(i) + "]").c_str()), 1, GL_FALSE, &bones[i][0][0]);
+                Unit::warriorMesh->DrawInstanced(instancedShader, warrior_ATTACK);
+            }
+        }
+
+        // ============================
+        // MAGES (SHADOWS)
+        // ============================
+        if (Unit::mageMesh) {
+            if (!mage_IDLE.empty()) {
+                Unit::mageMesh->PlayAnimation("IDLE");
+                Unit::mageMesh->UpdateAnimation(glfwGetTime());
+                auto bones = Unit::mageMesh->GetFinalBoneMatrices();
+                for (int i = 0; i < bones.size(); i++) glUniformMatrix4fv(glGetUniformLocation(instancedShader, ("finalBonesMatrices[" + std::to_string(i) + "]").c_str()), 1, GL_FALSE, &bones[i][0][0]);
+                Unit::mageMesh->DrawInstanced(instancedShader, mage_IDLE);
+            }
+            if (!mage_WALK.empty()) {
+                Unit::mageMesh->PlayAnimation("WALK");
+                Unit::mageMesh->UpdateAnimation(glfwGetTime());
+                auto bones = Unit::mageMesh->GetFinalBoneMatrices();
+                for (int i = 0; i < bones.size(); i++) glUniformMatrix4fv(glGetUniformLocation(instancedShader, ("finalBonesMatrices[" + std::to_string(i) + "]").c_str()), 1, GL_FALSE, &bones[i][0][0]);
+                Unit::mageMesh->DrawInstanced(instancedShader, mage_WALK);
+            }
+            if (!mage_ATTACK.empty()) {
+                Unit::mageMesh->PlayAnimation("SHOOT"); // Use SHOOT for attack
+                Unit::mageMesh->UpdateAnimation(glfwGetTime());
+                auto bones = Unit::mageMesh->GetFinalBoneMatrices();
+                for (int i = 0; i < bones.size(); i++) glUniformMatrix4fv(glGetUniformLocation(instancedShader, ("finalBonesMatrices[" + std::to_string(i) + "]").c_str()), 1, GL_FALSE, &bones[i][0][0]);
+                Unit::mageMesh->DrawInstanced(instancedShader, mage_ATTACK);
+            }
+        }
+
+        // Restore State
+        glCullFace(GL_BACK);
+        glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE); // Re-enable color writing!
+        //glDisable(GL_POLYGON_OFFSET_FILL);
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
         glViewport(0, 0, W_WIDTH, W_HEIGHT);
 
@@ -1250,6 +1826,7 @@ void mainLoop() {
         // -------------------------------------------------------
         // 7. MAIN RENDER PASS
         // -------------------------------------------------------
+
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         glEnable(GL_DEPTH_TEST);
         glDepthFunc(GL_LESS);
@@ -1272,9 +1849,26 @@ void mainLoop() {
         glUniform1i(glGetUniformLocation(terrainShader, "snowTrailMap"), 6);
         terrain->draw(terrainM);
 
-        // B. Standard Objects
+        // -------------------------------------------------------
+        // B. STANDARD OBJECTS (Terrain, Buildings, Environment)
+        // -------------------------------------------------------
         glUseProgram(shaderProgram);
+
+        // 1. Prepare Texture Unit 0
         glActiveTexture(GL_TEXTURE0);
+
+        // ✅ FIX 1: Tell Shader to use Textures
+        glUniform1i(glGetUniformLocation(shaderProgram, "useTexture"), 1);
+        glUniform1i(glGetUniformLocation(shaderProgram, "diffuseColorSampler"), 0); // Read from Unit 0
+
+        // ✅ FIX 2: Reset Material Colors to WHITE
+        // If Kd is yellow/grey, the texture gets tinted. We want pure white for textures.
+        glUniform4f(KdLocation, 1.0f, 1.0f, 1.0f, 1.0f);
+        glUniform4f(KaLocation, 0.2f, 0.2f, 0.2f, 1.0f);
+        glUniform4f(KsLocation, 0.1f, 0.1f, 0.1f, 1.0f);
+        glUniform1f(NsLocation, 50.0f);
+
+        // Matrix & Light Uniforms
         glUniformMatrix4fv(projectionMatrixLocation, 1, GL_FALSE, &P[0][0]);
         glUniformMatrix4fv(viewMatrixLocation, 1, GL_FALSE, &V[0][0]);
         glUniform3f(lightDirectionLocation, light.dir.x, light.dir.y, light.dir.z);
@@ -1283,50 +1877,222 @@ void mainLoop() {
         glUniform4fv(LdLocation, 1, &light.Ld[0]);
         glUniform4fv(LsLocation, 1, &light.Ls[0]);
         glUniformMatrix4fv(lightSpaceMatrixLoc_standard, 1, GL_FALSE, &lightSpaceMatrix[0][0]);
+
+        // Shadow Map
         glUniform1i(shadowMapLoc_standard, 5);
 
+        // Construction Uniforms (Reset defaults)
         glUniform1f(glGetUniformLocation(shaderProgram, "constructionProgress"), 1.0f);
         glUniform1f(glGetUniformLocation(shaderProgram, "buildingHeight"), 50.0f);
         glUniform3f(glGetUniformLocation(shaderProgram, "buildingBasePos"), 0, 0, 0);
 
-        uploadMaterial(defaultMaterial);
-        environment->draw(shaderProgram, modelMatrixLocation);
+        // DRAW ENVIRONMENT (Trees/Rocks)
+        // Note: Environment.cpp handles binding its own textures internally
+        int envDrawn = environment->draw(shaderProgram, modelMatrixLocation, cameraFrustum);
+        
 
+        // DRAW BUILDINGS
         glEnable(GL_BLEND);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
         glDisable(GL_CULL_FACE);
+
+        glActiveTexture(GL_TEXTURE0); // Ensure we are affecting Unit 0
+
         for (const auto& b : buildings) {
-            b->draw(V, P, shaderProgram, 1.0f);
+            if (cameraFrustum.isSphereVisible(b->getPosition(), 15.0f)) {
+
+                // ✅ SWITCH TEXTURE BASED ON TYPE
+                if (b->getType() == BuildingType::TOWN_CENTER) {
+                    glBindTexture(GL_TEXTURE_2D, texTownCenter);
+                }
+                else if (b->getType() == BuildingType::BARRACKS) {
+                    glBindTexture(GL_TEXTURE_2D, texBarracks);
+                }
+                else if (b->getType() == BuildingType::SHOOTING_RANGE) {
+                    glBindTexture(GL_TEXTURE_2D, texArchery);
+                }
+
+                // Draw
+                b->draw(V, P, shaderProgram, 1.0f);
+            }
         }
-        if (previewBuilding) {
-            previewBuilding->draw(V, P, shaderProgram, 0.3f);
+        
+
+        // -------------------------------------------------------
+        // PREVIEW GHOST BUILDING (Hologram Style)
+        // -------------------------------------------------------
+        if (previewBuilding && placingBuilding) {
+
+            // 1. Disable Texture (So it looks like a solid energy field)
+            glUniform1i(glGetUniformLocation(shaderProgram, "useTexture"), 0);
+
+            // 2. Determine Color: Bright Green (Valid) or Bright Red (Invalid)
+            glm::vec3 ghostColor = isPlacementValid ? glm::vec3(0.0f, 1.0f, 0.0f) : glm::vec3(1.0f, 0.0f, 0.0f);
+
+            // 3. Draw with transparency (0.4f alpha is a bit more visible than 0.3f)
+            previewBuilding->draw(V, P, shaderProgram, 0.4f, ghostColor);
+
+            // 4. Re-enable Texture (CRITICAL: So the rest of the game looks normal next frame)
+            glUniform1i(glGetUniformLocation(shaderProgram, "useTexture"), 1);
         }
+
         glDisable(GL_BLEND);
         glEnable(GL_CULL_FACE);
 
-        // C. Skinned Units
-        glUseProgram(skinnedShader);
-        glUniformMatrix4fv(glGetUniformLocation(skinnedShader, "P"), 1, GL_FALSE, &P[0][0]);
-        glUniformMatrix4fv(glGetUniformLocation(skinnedShader, "V"), 1, GL_FALSE, &V[0][0]);
-        glUniform3f(glGetUniformLocation(skinnedShader, "lightDirection_worldspace"), light.dir.x, light.dir.y, light.dir.z);
-        glUniform1f(glGetUniformLocation(skinnedShader, "light.power"), light.power);
-        glUniform4fv(glGetUniformLocation(skinnedShader, "light.La"), 1, &light.La[0]);
-        glUniform4fv(glGetUniformLocation(skinnedShader, "light.Ld"), 1, &light.Ld[0]);
-        glUniform4fv(glGetUniformLocation(skinnedShader, "light.Ls"), 1, &light.Ls[0]);
-        glUniformMatrix4fv(glGetUniformLocation(skinnedShader, "lightSpaceMatrix"), 1, GL_FALSE, &lightSpaceMatrix[0][0]);
-        glUniform1i(glGetUniformLocation(skinnedShader, "shadowMap"), 5);
-        glUniform1f(glGetUniformLocation(skinnedShader, "constructionProgress"), 1.0f);
-        glUniform1f(glGetUniformLocation(skinnedShader, "buildingHeight"), 10.0f);
-        glUniform3f(glGetUniformLocation(skinnedShader, "buildingBasePos"), 0, 0, 0);
-        glUniform4f(glGetUniformLocation(skinnedShader, "mtl.Ka"), 0.2f, 0.2f, 0.2f, 1.0f);
-        glUniform4f(glGetUniformLocation(skinnedShader, "mtl.Kd"), 1.0f, 1.0f, 1.0f, 1.0f);
-        glUniform4f(glGetUniformLocation(skinnedShader, "mtl.Ks"), 0.5f, 0.5f, 0.5f, 1.0f);
-        glUniform1f(glGetUniformLocation(skinnedShader, "mtl.Ns"), 50.0f);
+        // -------------------------------------------------------
+        // C. SKINNED UNITS (INSTANCED)
+        // -------------------------------------------------------
+        glUseProgram(instancedShader);
 
-        for (const auto& u : units) {
-            u->draw(V, P, skinnedShader, glfwGetTime());
+        // 1. Prepare Texture Unit 0
+        glActiveTexture(GL_TEXTURE0);
+
+        // ✅ FIX 3: Enable Textures for Instanced Shader
+        glUniform1i(glGetUniformLocation(instancedShader, "useTexture"), 1);
+        glUniform1i(glGetUniformLocation(instancedShader, "diffuseColorSampler"), 0);
+
+        // Global Uniforms
+        glUniformMatrix4fv(glGetUniformLocation(instancedShader, "P"), 1, GL_FALSE, &P[0][0]);
+        glUniformMatrix4fv(glGetUniformLocation(instancedShader, "V"), 1, GL_FALSE, &V[0][0]);
+
+        glUniform3f(glGetUniformLocation(instancedShader, "lightDirection_worldspace"), light.dir.x, light.dir.y, light.dir.z);
+        glUniform1f(glGetUniformLocation(instancedShader, "light.power"), light.power);
+        glUniform4fv(glGetUniformLocation(instancedShader, "light.La"), 1, &light.La[0]);
+        glUniform4fv(glGetUniformLocation(instancedShader, "light.Ld"), 1, &light.Ld[0]);
+        glUniform4fv(glGetUniformLocation(instancedShader, "light.Ls"), 1, &light.Ls[0]);
+        glUniformMatrix4fv(glGetUniformLocation(instancedShader, "lightSpaceMatrix"), 1, GL_FALSE, &lightSpaceMatrix[0][0]);
+
+        // Shadow Map (Unit 5)
+        glUniform1i(glGetUniformLocation(instancedShader, "shadowMap"), 5);
+
+        // Material Defaults (White so we see texture)
+        glUniform1f(glGetUniformLocation(instancedShader, "constructionProgress"), 1.0f);
+        glUniform1f(glGetUniformLocation(instancedShader, "buildingHeight"), 10.0f);
+        glUniform3f(glGetUniformLocation(instancedShader, "buildingBasePos"), 0, 0, 0);
+        glUniform4f(glGetUniformLocation(instancedShader, "mtl.Ka"), 0.2f, 0.2f, 0.2f, 1.0f);
+        glUniform4f(glGetUniformLocation(instancedShader, "mtl.Kd"), 1.0f, 1.0f, 1.0f, 1.0f); // White
+        glUniform4f(glGetUniformLocation(instancedShader, "mtl.Ks"), 0.5f, 0.5f, 0.5f, 1.0f);
+        glUniform1f(glGetUniformLocation(instancedShader, "mtl.Ns"), 50.0f);
+
+        // 4. Draw Batches
+        // NOTE: Ensure SkinnedMesh::DrawInstanced binds textures to Unit 0!
+
+        // ============================
+        // WORKERS
+        // ============================
+        if (Unit::minionMesh) {
+            glBindTexture(GL_TEXTURE_2D, texWorker);
+
+            // 1. Draw IDLE Workers
+            if (!worker_IDLE.empty()) {
+                Unit::minionMesh->PlayAnimation("IDLE");
+                Unit::minionMesh->UpdateAnimation(glfwGetTime()); // Calc IDLE bones
+
+                // Send Bones
+                auto bones = Unit::minionMesh->GetFinalBoneMatrices();
+                for (int i = 0; i < bones.size(); i++) {
+                    std::string name = "finalBonesMatrices[" + std::to_string(i) + "]";
+                    glUniformMatrix4fv(glGetUniformLocation(instancedShader, name.c_str()), 1, GL_FALSE, &bones[i][0][0]);
+                }
+                Unit::minionMesh->DrawInstanced(instancedShader, worker_IDLE);
+            }
+
+            // 2. Draw WALKING Workers
+            if (!worker_WALK.empty()) {
+                Unit::minionMesh->PlayAnimation("WALK");
+                Unit::minionMesh->UpdateAnimation(glfwGetTime()); // Calc WALK bones
+
+                auto bones = Unit::minionMesh->GetFinalBoneMatrices();
+                for (int i = 0; i < bones.size(); i++) {
+                    std::string name = "finalBonesMatrices[" + std::to_string(i) + "]";
+                    glUniformMatrix4fv(glGetUniformLocation(instancedShader, name.c_str()), 1, GL_FALSE, &bones[i][0][0]);
+                }
+                Unit::minionMesh->DrawInstanced(instancedShader, worker_WALK);
+            }
+
+            // 3. Draw ATTACKING Workers
+            if (!worker_ATTACK.empty()) {
+                Unit::minionMesh->PlayAnimation("ATTACK");
+                Unit::minionMesh->UpdateAnimation(glfwGetTime());
+
+                auto bones = Unit::minionMesh->GetFinalBoneMatrices();
+                for (int i = 0; i < bones.size(); i++) {
+                    std::string name = "finalBonesMatrices[" + std::to_string(i) + "]";
+                    glUniformMatrix4fv(glGetUniformLocation(instancedShader, name.c_str()), 1, GL_FALSE, &bones[i][0][0]);
+                }
+                Unit::minionMesh->DrawInstanced(instancedShader, worker_ATTACK);
+            }
         }
+
+        // ============================
+        // WARRIORS (Repeat Logic)
+        // ============================
+        if (Unit::warriorMesh) {
+            glBindTexture(GL_TEXTURE_2D, texWarrior);
+
+            if (!warrior_IDLE.empty()) {
+                Unit::warriorMesh->PlayAnimation("IDLE");
+                Unit::warriorMesh->UpdateAnimation(glfwGetTime());
+                auto bones = Unit::warriorMesh->GetFinalBoneMatrices();
+                for (int i = 0; i < bones.size(); i++) glUniformMatrix4fv(glGetUniformLocation(instancedShader, ("finalBonesMatrices[" + std::to_string(i) + "]").c_str()), 1, GL_FALSE, &bones[i][0][0]);
+                Unit::warriorMesh->DrawInstanced(instancedShader, warrior_IDLE);
+            }
+            if (!warrior_WALK.empty()) {
+                Unit::warriorMesh->PlayAnimation("WALK");
+                Unit::warriorMesh->UpdateAnimation(glfwGetTime());
+                auto bones = Unit::warriorMesh->GetFinalBoneMatrices();
+                for (int i = 0; i < bones.size(); i++) glUniformMatrix4fv(glGetUniformLocation(instancedShader, ("finalBonesMatrices[" + std::to_string(i) + "]").c_str()), 1, GL_FALSE, &bones[i][0][0]);
+                Unit::warriorMesh->DrawInstanced(instancedShader, warrior_WALK);
+            }
+            if (!warrior_ATTACK.empty()) {
+                Unit::warriorMesh->PlayAnimation("ATTACK");
+                Unit::warriorMesh->UpdateAnimation(glfwGetTime());
+                auto bones = Unit::warriorMesh->GetFinalBoneMatrices();
+                for (int i = 0; i < bones.size(); i++) glUniformMatrix4fv(glGetUniformLocation(instancedShader, ("finalBonesMatrices[" + std::to_string(i) + "]").c_str()), 1, GL_FALSE, &bones[i][0][0]);
+                Unit::warriorMesh->DrawInstanced(instancedShader, warrior_ATTACK);
+            }
+        }
+
+        // ============================
+        // MAGES (Repeat Logic)
+        // ============================
+        if (Unit::mageMesh) {
+            glBindTexture(GL_TEXTURE_2D, texMage);
+
+            if (!mage_IDLE.empty()) {
+                Unit::mageMesh->PlayAnimation("IDLE");
+                Unit::mageMesh->UpdateAnimation(glfwGetTime());
+                auto bones = Unit::mageMesh->GetFinalBoneMatrices();
+                for (int i = 0; i < bones.size(); i++) glUniformMatrix4fv(glGetUniformLocation(instancedShader, ("finalBonesMatrices[" + std::to_string(i) + "]").c_str()), 1, GL_FALSE, &bones[i][0][0]);
+                Unit::mageMesh->DrawInstanced(instancedShader, mage_IDLE);
+            }
+            if (!mage_WALK.empty()) {
+                Unit::mageMesh->PlayAnimation("WALK");
+                Unit::mageMesh->UpdateAnimation(glfwGetTime());
+                auto bones = Unit::mageMesh->GetFinalBoneMatrices();
+                for (int i = 0; i < bones.size(); i++) glUniformMatrix4fv(glGetUniformLocation(instancedShader, ("finalBonesMatrices[" + std::to_string(i) + "]").c_str()), 1, GL_FALSE, &bones[i][0][0]);
+                Unit::mageMesh->DrawInstanced(instancedShader, mage_WALK);
+            }
+            if (!mage_ATTACK.empty()) {
+                // Mages use "SHOOT" usually, but we mapped it to "SHOOT" in initialize
+                Unit::mageMesh->PlayAnimation("SHOOT");
+                Unit::mageMesh->UpdateAnimation(glfwGetTime());
+                auto bones = Unit::mageMesh->GetFinalBoneMatrices();
+                for (int i = 0; i < bones.size(); i++) glUniformMatrix4fv(glGetUniformLocation(instancedShader, ("finalBonesMatrices[" + std::to_string(i) + "]").c_str()), 1, GL_FALSE, &bones[i][0][0]);
+                Unit::mageMesh->DrawInstanced(instancedShader, mage_ATTACK);
+            }
+        }
+
+        // Debug Stats
+        static int frameCounter = 0;
+        frameCounter++;
+        if (frameCounter > 60) {
+            frameCounter = 0;
+        }
+
+        // Restore standard shader for UI/Lines
         glUseProgram(shaderProgram);
+        
 
         // -------------------------------------------------------
         // 8. UI OVERLAYS (Added Back)
@@ -1387,7 +2153,7 @@ int main()
     }
     catch (const std::exception& e) {
         std::cerr << e.what() << std::endl;
-        /*std::cin.get();*/
+        std::cin.get();
         freeResources();
         return -1;
     }
