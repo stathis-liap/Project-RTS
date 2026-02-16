@@ -5,7 +5,6 @@
 #include <GL/glew.h>
 #include <glm/glm.hpp>
 
-// ✅ Renamed to avoid conflicts with SkinnedMesh's Vertex struct
 struct TerrainVertex {
     glm::vec3 pos;
     glm::vec3 normal;
@@ -28,14 +27,13 @@ public:
     glm::vec3 getHeightAt(float x, float z) const;
 
     void flattenArea(const glm::vec3& center, float radius);
+    void createHole(glm::vec3 position, float radius, float depth);
 
     int width, height;
     float amplitude;
 
 private:
     std::vector<float> heightmap;
-
-    // ✅ Updated vector type
     std::vector<TerrainVertex> vertices;
     std::vector<unsigned int> indices;
 

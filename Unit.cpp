@@ -6,11 +6,11 @@
 #include <string>
 #include "Pathfinder.h"
 #include "Building.h"
-#include <algorithm> // Required for std::shuffle
-#include <random>    // Required for std::random_device
+#include "ParticleManager.h"
+#include <algorithm> 
+#include <random>    
 
 // Define static pointers so we load models only ONCE per game session
-// CORRECT: These define the static members declared in Unit.h
 SkinnedMesh* Unit::minionMesh = nullptr;
 SkinnedMesh* Unit::warriorMesh = nullptr;
 SkinnedMesh* Unit::mageMesh = nullptr;
@@ -24,15 +24,14 @@ const float STAMINA_DRAIN = 1.0f;
 
 int Unit::NextID = 0;
 
-// ---------------------------------------------------------------------
+
 // CONSTRUCTOR
-// ---------------------------------------------------------------------
 Unit::Unit(UnitType type, const glm::vec3& pos, int teamID)
     : type_(type), position_(pos), teamID_(teamID), velocity_(0.0f), mesh_(nullptr)
 {
     id_ = ++NextID; // ✅ Assign Unique ID
 
-    // 1. Initialize Stats
+    // Initialize Stats
     if (type_ == UnitType::WORKER) {
         maxHealth_ = 50;
         damage_ = 2; // Weak
@@ -53,12 +52,12 @@ Unit::Unit(UnitType type, const glm::vec3& pos, int teamID)
     }
     currentHealth_ = maxHealth_;
 
-    // 2. Load Models
+    // Load Models
     if (type_ == UnitType::WORKER) {
         if (!minionMesh) {
             std::cout << "Loading Worker Model..." << std::endl;
             minionMesh = new SkinnedMesh("models/Skeleton_Minion.fbx");
-            minionMesh->SetupInstancing(); // ✅ IMPORTANT
+            minionMesh->SetupInstancing(); 
         }
         mesh_ = minionMesh;
     }
@@ -66,7 +65,7 @@ Unit::Unit(UnitType type, const glm::vec3& pos, int teamID)
         if (!warriorMesh) {
             std::cout << "Loading Warrior Model..." << std::endl;
             warriorMesh = new SkinnedMesh("models/Skeleton_Warrior.fbx");
-            warriorMesh->SetupInstancing(); // ✅ IMPORTANT
+            warriorMesh->SetupInstancing(); 
         }
         mesh_ = warriorMesh;
     }
@@ -74,7 +73,7 @@ Unit::Unit(UnitType type, const glm::vec3& pos, int teamID)
         if (!mageMesh) {
             std::cout << "Loading Mage Model..." << std::endl;
             mageMesh = new SkinnedMesh("models/Skeleton_Mage.fbx");
-            mageMesh->SetupInstancing(); // ✅ IMPORTANT
+            mageMesh->SetupInstancing(); 
         }
         mesh_ = mageMesh;
     }
@@ -87,9 +86,7 @@ Unit::~Unit() {
     // We do NOT delete mesh_ here because it is shared/static.
 }
 
-// ---------------------------------------------------------------------
 // TASK HELPERS
-// ---------------------------------------------------------------------
 void Unit::assignGatherTask(int obstacleID) {
     if (type_ != UnitType::WORKER) {
         std::cout << "Only workers can gather resources!" << std::endl;
@@ -101,26 +98,25 @@ void Unit::assignGatherTask(int obstacleID) {
 void Unit::assignGatherQueue(const std::vector<int>& resourceIDs) {
     if (resourceIDs.empty()) return;
 
-    // 1. Clear previous tasks
+    // Clear previous tasks
     taskQueue_.clear();
     m_HasTarget = false;
     state_ = UnitState::IDLE;
 
-    // 2. Create a local copy to shuffle
+    // Create a local copy to shuffle
     std::vector<int> shuffledResources = resourceIDs;
 
-    // 3. Shuffle the list randomly
-    // This ensures Unit A goes to Tree #1, while Unit B goes to Tree #5
+    // Shuffle the list randomly
     static std::random_device rd;
     static std::mt19937 g(rd());
     std::shuffle(shuffledResources.begin(), shuffledResources.end(), g);
 
-    // 4. Fill the queue
+    // Fill the queue
     for (int id : shuffledResources) {
         taskQueue_.push_back(id);
     }
 
-    // 5. Start immediately if we have a task
+    // Start immediately if we have a task
     if (!taskQueue_.empty()) {
         state_ = UnitState::IDLE; // The Update loop will pick up the task in the IDLE block
     }
@@ -129,29 +125,29 @@ void Unit::assignGatherQueue(const std::vector<int>& resourceIDs) {
 void Unit::assignAttackQueue(const std::vector<Unit*>& enemies) {
     if (enemies.empty()) return;
 
-    // 1. Create a local copy so we can shuffle it
+    // Create a local copy so we can shuffle it
     std::vector<Unit*> shuffledTargets = enemies;
 
-    // 2. Shuffle the list randomly
+    // Shuffle the list randomly
     // This ensures 50 warriors don't all chase the exact same skeleton first
     static std::random_device rd;
     static std::mt19937 g(rd());
     std::shuffle(shuffledTargets.begin(), shuffledTargets.end(), g);
 
-    // 3. Reset State
+    // Reset State
     taskQueue_.clear();
     m_HasTarget = false;
     m_Path.clear();
     attackQueue_.clear();
 
-    // 4. Fill Queue with Shuffled IDs
+    // Fill Queue with Shuffled IDs
     for (Unit* u : shuffledTargets) {
         if (u && u->getID() != id_) {
             attackQueue_.push_back(u->getID());
         }
     }
 
-    // 5. Start attacking the first one immediately
+    // Start attacking the first one immediately
     if (!attackQueue_.empty()) {
         targetID_ = attackQueue_.front();
         attackQueue_.pop_front();
@@ -162,7 +158,7 @@ void Unit::assignAttackQueue(const std::vector<Unit*>& enemies) {
 void Unit::assignAttackTask(Unit* enemy) {
     if (!enemy || enemy == this || enemy->getTeam() == teamID_) return;
 
-    // ✅ FIX: Use ID instead of pointer
+    // Use ID instead of pointer
     targetID_ = enemy->getID();
     attackQueue_.clear(); // Clear any queued enemies if we manually clicked one
 
@@ -195,32 +191,28 @@ void Unit::takeDamage(int dmg) {
 void Unit::update(float dt, const Terrain* terrain, const std::vector<std::unique_ptr<Unit>>& allUnits,
     Resources& globalResources, Environment* env, NavigationGrid* navGrid)
 {
-    // ==================================================================================
-    // 1. STATE MACHINE (Logic)
-    // ==================================================================================
-    // 
-
+    // 1. STATE MACHINE
     // --- STATE: IDLE (Looking for work) ---
     if (state_ == UnitState::IDLE && !taskQueue_.empty()) {
         currentTargetID_ = taskQueue_.front();
         if (env) {
             Obstacle* obs = env->getObstacleById(currentTargetID_);
             if (obs && obs->active) {
-                // 1. Calculate direction to edge of tree
+                // Calculate direction to edge of tree
                 glm::vec3 dir = obs->position - position_;
                 if (glm::length(dir) > 0.001f) dir = glm::normalize(dir);
                 else dir = glm::vec3(1, 0, 0);
 
-                // 2. Target point just outside radius
+                // Target point just outside radius
                 float stopDistance = obs->radius + 1.5f;
                 glm::vec3 gatherSpot = obs->position - (dir * stopDistance);
 
-                // 3. Find path
+                // Find path
                 std::vector<glm::vec3> path = Pathfinder::findPath(position_, gatherSpot, navGrid);
 
                 if (!path.empty()) {
                     setPath(path);
-                    state_ = UnitState::MOVING; // ✅ FIX: Move first, Gather later
+                    state_ = UnitState::MOVING; // Move first, Gather later
                 }
                 else {
                     std::cout << "Path to resource blocked." << std::endl;
@@ -236,10 +228,7 @@ void Unit::update(float dt, const Terrain* terrain, const std::vector<std::uniqu
     // --- STATE: MOVING (Travel & Chase Logic) ---
     if (state_ == UnitState::MOVING) {
 
-        // A. CHECK TRANSITIONS (Are we there yet?)
-        // ----------------------------------------
-
-        // 1. Moving to Attack UNIT
+        // Moving to Attack UNIT
         if (targetID_ != -1) {
             Unit* targetUnit = nullptr;
             for (const auto& u : allUnits) { if (u->getID() == targetID_) { targetUnit = u.get(); break; } }
@@ -253,14 +242,14 @@ void Unit::update(float dt, const Terrain* terrain, const std::vector<std::uniqu
                 float reach = attackRange_ + 1.0f;
 
                 if (dist <= reach) {
-                    // ✅ ARRIVED -> Switch to Action
+                    // ARRIVED -> Switch to Action
                     state_ = UnitState::ATTACKING;
                     velocity_ = glm::vec3(0.0f);
                     m_Path.clear();
                     m_HasTarget = false;
                 }
                 else {
-                    // ✅ CHASE LOGIC (Moved here from Attacking state)
+                    // CHASE LOGIC (Moved here from Attacking state)
                     repathTimer_ += dt;
                     if (repathTimer_ > 0.5f || !m_HasTarget) {
                         repathTimer_ = 0.0f;
@@ -271,7 +260,7 @@ void Unit::update(float dt, const Terrain* terrain, const std::vector<std::uniqu
                 }
             }
         }
-        // 2. Moving to Attack BUILDING
+        // Moving to Attack BUILDING
         else if (targetBuilding_) {
             if (targetBuilding_->isDead()) {
                 targetBuilding_ = nullptr;
@@ -282,7 +271,7 @@ void Unit::update(float dt, const Terrain* terrain, const std::vector<std::uniqu
                 float dist = glm::distance(position_, targetBuilding_->getPosition());
 
                 if (dist <= effectiveRange) {
-                    // ✅ ARRIVED -> Switch to Action
+                    // ARRIVED -> Switch to Action
                     state_ = UnitState::ATTACKING_BUILDING;
                     velocity_ = glm::vec3(0.0f);
                     m_Path.clear();
@@ -291,7 +280,7 @@ void Unit::update(float dt, const Terrain* terrain, const std::vector<std::uniqu
                 // (Building is static, no need to re-path constantly)
             }
         }
-        // 3. Moving to Gather RESOURCE
+        // Moving to Gather RESOURCE
         else if (currentTargetID_ != -1 && env) {
             Obstacle* target = env->getObstacleById(currentTargetID_);
             if (target && target->active) {
@@ -311,8 +300,7 @@ void Unit::update(float dt, const Terrain* terrain, const std::vector<std::uniqu
             }
         }
 
-        // B. EXECUTE MOVEMENT (Standard Path Following)
-        // ---------------------------------------------
+        // EXECUTE MOVEMENT (Standard Path Following)
         if (state_ == UnitState::MOVING) { // Only if we didn't switch state above
             if (m_HasTarget && !m_Path.empty()) {
                 glm::vec3 targetPoint = m_Path.front();
@@ -337,8 +325,7 @@ void Unit::update(float dt, const Terrain* terrain, const std::vector<std::uniqu
             }
             // Fail-safe
             if (!m_HasTarget && state_ == UnitState::MOVING) {
-                // If we have a target but no path, try repath? Or Idle.
-                // For now, Idle to prevent stuck state.
+                // If we have a target but no path, go Idle.
                 if (targetID_ == -1 && currentTargetID_ == -1 && !targetBuilding_) {
                     state_ = UnitState::IDLE;
                 }
@@ -358,7 +345,7 @@ void Unit::update(float dt, const Terrain* terrain, const std::vector<std::uniqu
             if (!attackQueue_.empty()) {
                 targetID_ = attackQueue_.front();
                 attackQueue_.pop_front();
-                state_ = UnitState::MOVING; // ✅ Switch back to moving to chase new target
+                state_ = UnitState::MOVING; // Switch back to moving to chase new target
             }
             else {
                 state_ = UnitState::IDLE;
@@ -371,7 +358,7 @@ void Unit::update(float dt, const Terrain* terrain, const std::vector<std::uniqu
             float reach = attackRange_ + 1.0f;
 
             if (dist > reach) {
-                state_ = UnitState::MOVING; // ✅ Switch back to moving to chase
+                state_ = UnitState::MOVING; // Switch back to moving to chase
             }
             else {
                 // HIT LOGIC
@@ -380,6 +367,18 @@ void Unit::update(float dt, const Terrain* terrain, const std::vector<std::uniqu
                 if (attackTimer_ >= attackCooldown_) {
                     attackTimer_ = 0.0f;
                     targetUnit->takeDamage(damage_);
+                }
+                // MAGE PARTICLE BEAM
+                if (type_ == UnitType::RANGED) {
+                    // Calculate start (mage hand) and end (enemy body)
+                    glm::vec3 mageHand = position_ + glm::vec3(-2.0f, 2.5f, 1.0f);
+                    glm::vec3 enemyBody = targetUnit->getPosition() + glm::vec3(0.0f, 2.0f, 0.0f);
+
+                    // 1. Create the beam line
+                    ParticleManager::addMageBeam(mageHand, enemyBody);
+
+                    // 2. Create a small impact burst at the enemy
+                    ParticleManager::addMageImpact(enemyBody);
                 }
             }
         }
@@ -444,15 +443,12 @@ void Unit::update(float dt, const Terrain* terrain, const std::vector<std::uniqu
         }
     }
 
-    // ==================================================================================
-    // 2. PHYSICS & MOVEMENT (Steering Behaviors)
-    // ==================================================================================
-    // 
 
+    // 2. PHYSICS & MOVEMENT (Steering Behaviors)
     glm::vec3 acc(0.0f);
 
     // Apply forces ONLY if we have a target or need to separate
-    // ✅ Check state for movement:
+    // Check state for movement:
     bool isMovingState = (state_ == UnitState::MOVING);
 
     if (isMovingState && m_HasTarget && !m_Path.empty()) {
@@ -463,7 +459,7 @@ void Unit::update(float dt, const Terrain* terrain, const std::vector<std::uniqu
         float dist = glm::distance(position_, target);
 
         // SEEK FORCE
-        float moveSpeed = 50.0f;
+        float moveSpeed = 150.0f;
         glm::vec3 seek = dir * moveSpeed;
 
         // Arrival Braking
@@ -487,37 +483,54 @@ void Unit::update(float dt, const Terrain* terrain, const std::vector<std::uniqu
             if (other.get() == this) continue;
 
             float d = glm::distance(position_, other->getPosition());
-            if (d < 3.0f && d > 0.01f) {
+            if (d < 10.0f && d > 0.01f) {
                 glm::vec3 push = position_ - other->getPosition();
                 push.y = 0;
-                sepForce += glm::normalize(push) / d;
+                sepForce += glm::normalize(push) / (d*d);
                 neighbors++;
             }
         }
         if (neighbors > 0) {
-            acc += sepForce * 60.0f;
+            acc += sepForce * 35.0f;
         }
     }
 
-    // INTEGRATION
+
+    // Calculate Acceleration/Friction 
     velocity_ += acc * dt;
-
-    // Cap Max Speed
     float maxSpeed = 10.0f;
-    if (glm::length(velocity_) > maxSpeed) {
-        velocity_ = glm::normalize(velocity_) * maxSpeed;
-    }
+    if (glm::length(velocity_) > maxSpeed) velocity_ = glm::normalize(velocity_) * maxSpeed;
 
-    // Friction
-    if (!isMovingState) {
-        velocity_ *= 0.5f; // High friction when Action/Idle
-    }
-    else {
-        velocity_ *= 0.95f; // Low friction when Moving
-    }
+    if (!isMovingState) velocity_ *= 0.5f;
+    else velocity_ *= 0.95f;
 
     if (glm::length(velocity_) < 0.1f) velocity_ = glm::vec3(0.0f);
-    position_ += velocity_ * dt;
+
+    // PREDICT MOVE
+    glm::vec3 moveStep = velocity_ * dt;
+    glm::vec3 nextPos = position_ + moveStep;
+
+    // SMART GRID CHECK (Sliding Logic)
+    if (navGrid->isBlocked((int)nextPos.x, (int)nextPos.z)) {
+        // Try to move only in X
+        glm::vec3 nextX = position_ + glm::vec3(moveStep.x, 0, 0);
+        // Try to move only in Z
+        glm::vec3 nextZ = position_ + glm::vec3(0, 0, moveStep.z);
+
+        if (!navGrid->isBlocked((int)nextX.x, (int)nextX.z)) {
+            position_ = nextX; // Slide along the Z-wall
+        }
+        else if (!navGrid->isBlocked((int)nextZ.x, (int)nextZ.z)) {
+            position_ = nextZ; // Slide along the X-wall
+        }
+        else {
+            velocity_ = glm::vec3(0.0f); // Cornered: Stop
+        }
+    }
+    else {
+        // Path is clear!
+        position_ = nextPos;
+    }
 
     // Terrain Clamp
     if (position_.x <= 0) position_.x = 0.1f;
@@ -529,9 +542,8 @@ void Unit::update(float dt, const Terrain* terrain, const std::vector<std::uniqu
         position_.y = terrain->getHeightAt(position_.x, position_.z).y;
     }
 
-    // =========================================================
+   
     // FINAL PHYSICS CLAMP (The "Invisible Wall")
-    // =========================================================
     // This stops units from being pushed into the border rocks by physics/separation.
 
     float mapSize = 512.0f;
@@ -553,7 +565,7 @@ void Unit::setPath(const std::vector<glm::vec3>& newPath) {
     m_Path = newPath;
     m_HasTarget = (!m_Path.empty());
 
-    // ✅ FIX: Automatically switch state to MOVING if we have a path
+    // Automatically switch state to MOVING if we have a path
     if (m_HasTarget && state_ != UnitState::ATTACKING) {
         state_ = UnitState::MOVING;
     }
@@ -562,7 +574,7 @@ void Unit::setPath(const std::vector<glm::vec3>& newPath) {
 void Unit::draw(const glm::mat4& view, const glm::mat4& projection, GLuint shaderProgram, float currentTime) {
     if (!mesh_) return;
 
-    // 1. SETUP MODEL MATRIX
+    // SETUP MODEL MATRIX
     glm::mat4 model = glm::translate(glm::mat4(1.0f), position_);
 
     // Rotate to face movement direction
@@ -575,12 +587,12 @@ void Unit::draw(const glm::mat4& view, const glm::mat4& projection, GLuint shade
     float scaleVal = 3.0f;
     model = glm::scale(model, glm::vec3(scaleVal));
 
-    // 2. SEND UNIFORMS
+    // SEND UNIFORMS
     glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "M"), 1, GL_FALSE, &model[0][0]);
     glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "V"), 1, GL_FALSE, &view[0][0]);
     glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "P"), 1, GL_FALSE, &projection[0][0]);
 
-    // 3. ANIMATION
+    // ANIMATION
     mesh_->UpdateAnimation(currentTime);
     const std::vector<glm::mat4>& transforms = mesh_->GetFinalBoneMatrices();
 

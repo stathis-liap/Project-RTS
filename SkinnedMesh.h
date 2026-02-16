@@ -35,11 +35,9 @@ public:
     void SetupInstancing();
     void DrawInstanced(GLuint shaderProgram, const std::vector<glm::mat4>& models);
 
-    // ✅ NEW: Animation System
-    // In SkinnedMesh.h
+    // Animation System
     void LoadAnimation(const std::string& filePath, const std::string& animationName, int index = 0);
     void PlayAnimation(const std::string& animationName);
-
     void UpdateAnimation(float timeInSeconds);
 
     // Debugging
@@ -63,7 +61,7 @@ private:
     const aiScene* m_Scene = nullptr;   // The Mesh Scene
     Assimp::Importer m_Importer;        // The Mesh Importer
 
-    // ✅ NEW: Animation Storage
+    // Animation Storage
     // We need to keep the importers alive, otherwise the pointers in m_Animations become invalid.
     std::vector<Assimp::Importer*> m_AnimationImporters;
     std::map<std::string, aiAnimation*> m_Animations;

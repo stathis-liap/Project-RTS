@@ -7,13 +7,10 @@
 #include "Resource.h"
 #include "Environment.h"
 
-// ✅ 1. Forward Declarations
 class NavigationGrid;
-class Building; // <--- ADD THIS so Unit knows Building exists
+class Building; 
 
 enum class UnitType { WORKER, MELEE, RANGED };
-
-// ✅ 2. Add the new State
 enum class UnitState { IDLE, MOVING, GATHERING, ATTACKING, ATTACKING_BUILDING };
 
 class Unit {
@@ -26,10 +23,9 @@ public:
 
     void draw(const glm::mat4& view, const glm::mat4& projection, GLuint shaderProgram, float currentTime);
 
-    // ✅ FIX 1: Add Getter
     UnitType getType() const { return type_; }
 
-    // ✅ FIX 2: Expose Meshes publicly so Main can use them
+    // Expose Meshes publicly so Main can use them
     static SkinnedMesh* minionMesh;
     static SkinnedMesh* warriorMesh;
     static SkinnedMesh* mageMesh;
@@ -45,7 +41,7 @@ public:
     bool hasStaminaForTask(int cost) const { return currentStamina_ >= cost; }
     float getStamina() const { return currentStamina_; }
     glm::vec3 getVelocity() const { return velocity_; }
-    // ✅ NEW: Assigns a list of resources, but randomizes the order
+    // Assigns a list of resources, but randomizes the order
     void assignGatherQueue(const std::vector<int>& resourceIDs);
 
     void clearTasks() {
@@ -54,7 +50,7 @@ public:
         state_ = UnitState::IDLE;
         targetID_ = -1;
         attackQueue_.clear();
-        targetBuilding_ = nullptr; // ✅ Clear building target too
+        targetBuilding_ = nullptr;
     }
 
     // Combat Logic
@@ -62,7 +58,7 @@ public:
     void assignAttackQueue(const std::vector<Unit*>& enemies);
     float repathTimer_ = 0.0f;
 
-    // ✅ 3. Declare the Building Attack Function
+    //Declare the Building Attack Function
     void assignAttackTask(Building* building);
 
     void takeDamage(int dmg);
@@ -71,6 +67,7 @@ public:
     bool isAttacking() const { return state_ == UnitState::ATTACKING; }
     bool isAttackingBuilding() const { return state_ == UnitState::ATTACKING_BUILDING; }
     bool isGathering() const { return state_ == UnitState::GATHERING; }
+    void explode() { currentHealth_ = -1.0f; } // Instantly kill unit
 
     int getID() const { return id_; }
     UnitState getState() const { return state_; }
@@ -83,7 +80,7 @@ private:
     int targetID_ = -1;
     std::deque<int> attackQueue_;
 
-    // ✅ 4. Declare the Building Target Pointer
+    // Declare the Building Target Pointer
     Building* targetBuilding_ = nullptr;
 
     // Standard Variables
@@ -101,11 +98,6 @@ private:
 
     // State
     UnitState state_ = UnitState::IDLE;
-
-    // Flocking Weights
-    float separationWeight_ = 20.0f;
-    float alignmentWeight_ = 5.0f;
-    float cohesionWeight_ = 1.0f;
 
     // Worker Stats
     float currentStamina_ = 100.0f;

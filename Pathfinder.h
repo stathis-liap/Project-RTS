@@ -22,32 +22,46 @@ struct CompareNode {
 };
 
 class Pathfinder {
-    // ✅ DEFINE BORDER SIZE (Matches your rock border thickness)
+    // DEFINE BORDER SIZE (Matches your rock border thickness)
     static const int BORDER_SIZE = 35;
     static const int MAP_SIZE = 512;
 
 public:
     // Helper: Find nearest walkable tile if target is blocked
-    static glm::vec3 findNearestWalkable(int targetX, int targetZ, const NavigationGrid* grid) {
+    static glm::vec3 findNearestWalkable(int targetX, int targetZ, const NavigationGrid* grid, int padding = 5) {
         int radius = 1;
-        int maxRadius = 10;
+        int maxRadius = 20; // Increased search range
 
         while (radius < maxRadius) {
             for (int x = targetX - radius; x <= targetX + radius; x++) {
                 for (int z = targetZ - radius; z <= targetZ + radius; z++) {
 
-                    // ✅ CHECK BORDER LIMITS
                     if (x < BORDER_SIZE || x >= MAP_SIZE - BORDER_SIZE ||
                         z < BORDER_SIZE || z >= MAP_SIZE - BORDER_SIZE) continue;
 
                     if (!grid->isBlocked(x, z)) {
-                        return glm::vec3(x, 0.0f, z);
+                        // Check if this spot itself has enough clearance
+                        // This prevents units from hugging the wall of a building
+                        bool spaceIsClear = true;
+                        for (int px = -padding; px <= padding; px++) {
+                            for (int pz = -padding; pz <= padding; pz++) {
+                                if (grid->isBlocked(x + px, z + pz)) {
+                                    spaceIsClear = false;
+                                    break;
+                                }
+                            }
+                            if (!spaceIsClear) break;
+                        }
+
+                        if (spaceIsClear) {
+                            return glm::vec3(x, 0.0f, z);
+                        }
                     }
                 }
             }
             radius++;
         }
-        return glm::vec3(-1.0f); // Failed
+        return glm::vec3(-1.0f);
     }
 
     static std::vector<glm::vec3> findPath(glm::vec3 start, glm::vec3 target, const NavigationGrid* grid)
@@ -59,9 +73,8 @@ public:
         int targetX = (int)target.x;
         int targetZ = (int)target.z;
 
-        // =========================================================
-        // ✅ 1. CLAMP TARGET TO SAFE ZONE
-        // =========================================================
+
+        // CLAMP TARGET TO SAFE ZONE
         // If user clicks on the border rocks (e.g., x=5), force target to x=15
         if (targetX < BORDER_SIZE) targetX = BORDER_SIZE;
         if (targetX >= MAP_SIZE - BORDER_SIZE) targetX = MAP_SIZE - BORDER_SIZE - 1;
@@ -69,11 +82,10 @@ public:
         if (targetZ < BORDER_SIZE) targetZ = BORDER_SIZE;
         if (targetZ >= MAP_SIZE - BORDER_SIZE) targetZ = MAP_SIZE - BORDER_SIZE - 1;
 
-        // ---------------------------------------------------------
+        
         // 2. CHECK START NODE
-        // ---------------------------------------------------------
         if (grid->isBlocked(startX, startZ)) {
-            // std::cout << "⚠️ START POINT BLOCKED! Unit is stuck." << std::endl;
+            // std::cout << "START POINT BLOCKED! Unit is stuck." << std::endl;
             glm::vec3 freeStart = findNearestWalkable(startX, startZ, grid);
             if (freeStart.x != -1.0f) {
                 startX = (int)freeStart.x;
@@ -84,11 +96,10 @@ public:
             }
         }
 
-        // ---------------------------------------------------------
-        // 3. CHECK TARGET NODE
-        // ---------------------------------------------------------
+
+        // 3. CHECK TARGET NODE      
         if (grid->isBlocked(targetX, targetZ)) {
-            // std::cout << "⚠️ TARGET BLOCKED! Searching nearby..." << std::endl;
+            // std::cout << "TARGET BLOCKED! Searching nearby..." << std::endl;
             glm::vec3 newTarget = findNearestWalkable(targetX, targetZ, grid);
             if (newTarget.x == -1.0f) {
                 return path;
@@ -102,8 +113,7 @@ public:
 
         // Use static to avoid reallocating memory every click
         static std::vector<bool> closedSet(MAP_SIZE * MAP_SIZE, false);
-        // Optimization: Use a "visited ID" instead of clearing vector? 
-        // For now, fill is safe enough for 512x512
+        // fill is safe enough for 512x512
         std::fill(closedSet.begin(), closedSet.end(), false);
 
         // Track allocated nodes to delete them later
@@ -135,7 +145,7 @@ public:
 
             // Safety Cutoff
             if (nodesExplored > 15000) {
-                // std::cout << "❌ Pathfinding timeout." << std::endl;
+                // std::cout << "Pathfinding timeout." << std::endl;
                 break;
             }
 
@@ -147,9 +157,7 @@ public:
                     int nx = current->x + dx;
                     int nz = current->z + dz;
 
-                    // =====================================================
-                    // ✅ 4. STRICT BORDER CHECK
-                    // =====================================================
+                    // STRICT BORDER CHECK
                     // Ignore any neighbor inside the rock border
                     if (nx < BORDER_SIZE || nx >= MAP_SIZE - BORDER_SIZE ||
                         nz < BORDER_SIZE || nz >= MAP_SIZE - BORDER_SIZE) continue;

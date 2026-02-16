@@ -1,0 +1,28 @@
+#version 330 core
+
+in vec2 UV;
+in float particleLife; // 1.0 -> 0.0
+
+out vec4 fragmentColor;
+
+uniform sampler2D texture0;
+
+void main() {
+    vec4 tex = texture(texture0, UV);
+
+    // 1. Boost the life curve
+    // Using sqrt makes it stay "stronger" for longer, then drop off quickly at the end
+    float strongLife = sqrt(particleLife); 
+
+    // 2. Color: Start bright Yellow (1, 1, 0) and go to Deep Red (1, 0, 0)
+    // We boost the red/green channels slightly to combat transparency
+    vec3 heatColor = vec3(1.2, strongLife * 1.2, 0.0); 
+
+    // 3. Alpha: Maximize the texture's alpha
+    // Increase the multiplier (3.0) to make it more "solid"
+    float alpha = tex.a * strongLife * 3.0;
+
+    // 4. Combine
+    // Multiplying by heatColor and intensity
+    fragmentColor = vec4(heatColor, alpha);
+}

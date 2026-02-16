@@ -1,0 +1,27 @@
+#version 330 core
+
+layout(location = 0) in vec3 vertexPosition_modelspace;
+layout(location = 2) in vec2 vertexUV;
+layout(location = 3) in mat4 aInstanceMatrix; // Translation
+layout(location = 7) in mat4 rotationMatrix;  // Rotation
+layout(location = 11) in float scale;         // Scale
+layout(location = 12) in float p_life;        // Life (Missing in your version)
+
+out vec2 UV;
+out float particleLife;
+
+uniform mat4 PV;
+
+void main() {
+    UV = vertexUV;
+    particleLife = p_life;
+
+    // 1. Start with the local vertex (multiplied by scale)
+    vec4 localPos = vec4(vertexPosition_modelspace * scale, 1.0);
+
+    // 2. Apply Rotation, then Translation (aInstanceMatrix)
+    vec4 worldPos = aInstanceMatrix * rotationMatrix * localPos;
+
+    // 3. Project to screen (PV is Projection * View)
+    gl_Position = PV * worldPos;
+}

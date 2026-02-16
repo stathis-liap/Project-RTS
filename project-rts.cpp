@@ -1,6 +1,3 @@
-// ---------------------------------------------------------------
-// main.cpp
-// ---------------------------------------------------------------
 #include <iostream>
 #include <string>
 #include <algorithm>
@@ -29,13 +26,15 @@
 #include "NavigationGrid.h"
 #include "Frustum.h"
 
+#include "ParticleManager.h"
+
 // ---------------------------------------------------------------
 using namespace std;
 using namespace glm;
 // ---------------------------------------------------------------
-#define W_WIDTH 1920
-#define W_HEIGHT 1080
-#define TITLE "RTS – Terrain + Cursor + Zoom-to-cursor"
+#define W_WIDTH 1920 //1920
+#define W_HEIGHT 1080 //1080
+#define TITLE "RTS Project"
 // ---------------------------------------------------------------
 GLFWwindow* window = nullptr;
 Camera* camera = nullptr;
@@ -54,12 +53,17 @@ GLuint shadowMapLoc_standard = 0;
 GLuint lightSpaceMatrixLoc_standard = 0;
 GLuint instancedShader = 0;
 
+GLuint particleShaderProgram = 0;
+
+std::vector<std::unique_ptr<IntParticleEmitter>> ParticleManager::active_emitters;
+Drawable* ParticleManager::particle_quad = nullptr;
+
 Frustum cameraFrustum;
 
 Environment* environment = nullptr;
 
 SkinnedMesh* myActor = nullptr;
-GLuint skinnedShader = 0;
+//GLuint skinnedShader = 0;
 
 GLuint texWorker = 0;
 GLuint texWarrior = 0;
@@ -70,13 +74,16 @@ GLuint texTownCenter = 0;
 GLuint texBarracks = 0;
 GLuint texArchery = 0;
 
-// Nature Textures (We will pass these to Environment later)
+// Nature Textures (pass these to Environment later)
 GLuint texTree = 0;
 GLuint texRock = 0;
+
+GLuint fireTexture = 0;
 
 GLuint whiteShader = 0;
 
 NavigationGrid* navGrid = nullptr;
+
 
 // Uniform locations (standard shader)
 GLuint projectionMatrixLocation, viewMatrixLocation, modelMatrixLocation;
@@ -134,26 +141,18 @@ Resources playerResources;
 // ---------------------------------------------------------------
 
 void createContext()
-
 {
-
     // Standard shader
 
     shaderProgram = loadShaders("StandardShading.vertexshader", "StandardShading.fragmentshader");
-
-
     GLint isLinked = 0;
 
     glGetProgramiv(shaderProgram, GL_LINK_STATUS, &isLinked);
 
     if (isLinked == GL_FALSE) {
-
         GLint maxLength = 0;
-
         glGetProgramiv(shaderProgram, GL_INFO_LOG_LENGTH, &maxLength);
-
         std::vector<char> infoLog(maxLength);
-
         glGetProgramInfoLog(shaderProgram, maxLength, &maxLength, &infoLog[0]);
 
         std::cout << "CRITICAL SHADER ERROR: " << &infoLog[0] << std::endl;
@@ -161,8 +160,6 @@ void createContext()
         return; // Stop execution here so you can read the error
 
     }
-
-
 
     projectionMatrixLocation = glGetUniformLocation(shaderProgram, "P");
 
@@ -188,7 +185,6 @@ void createContext()
 
     lightPowerLocation = glGetUniformLocation(shaderProgram, "light.power");
 
-
     shadowMapLoc_standard = glGetUniformLocation(shaderProgram, "shadowMap");
 
     lightSpaceMatrixLoc_standard = glGetUniformLocation(shaderProgram, "lightSpaceMatrix");
@@ -208,37 +204,25 @@ void createContext()
 
     // Create environment
     environment = new Environment();
-
-    // Note: If Terrain doesn't have getHeight(), pass nullptr or update Terrain class
+    //create navigation grid
     navGrid = new NavigationGrid(512, 512);
 
-    environment->initialize(terrain, 512.0f, 1500);
+    environment->initialize(terrain,navGrid, 512.0f, 1500);
     environment->setTextures(texTree, texRock);
 
     shadowShader = loadShaders("ShadowMap.vertexshader", "ShadowMap.fragmentshader");
 
     shadowMap = new ShadowMap(4096, 4096);
-
-
     snowTrailMap = new SnowTrailMap(2048, 2048);
 
-    snowTrailMap->clear(); // ← FULL SNOW at start
-
-
+    snowTrailMap->clear(); // FULL SNOW at start
     snowTrailShader = loadShaders("SnowTrail.vertexshader", "SnowTrail.fragmentshader");
-
-
     debugShader = loadShaders("debugDepthShader.vertexshader", "debugDepthShader.fragmentshader");
-
-
     whiteShader = loadShaders("White.vertexshader", "White.fragmentshader");
-
-
     //skinnedShader = loadShaders("SkinnedShading.vertexshader", "SkinnedShading.fragmentshader");
     instancedShader = loadShaders("SkinnedInstanced.vertexshader", "SkinnedInstanced.fragmentshader");
 
     // Debug quad
-
     float quadVertices[] = {
 
         -1.0f, -1.0f, 0.0f, 0.0f,
@@ -254,81 +238,49 @@ void createContext()
     unsigned int indices[] = { 0, 1, 2, 0, 2, 3 };
 
     glGenVertexArrays(1, &quadVAO);
-
     glGenBuffers(1, &quadVBO);
-
     glGenBuffers(1, &quadEBO);
-
     glBindVertexArray(quadVAO);
-
     glBindBuffer(GL_ARRAY_BUFFER, quadVBO);
-
     glBufferData(GL_ARRAY_BUFFER, sizeof(quadVertices), quadVertices, GL_STATIC_DRAW);
-
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, quadEBO);
-
     glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(indices), indices, GL_STATIC_DRAW);
-
     glEnableVertexAttribArray(0);
-
     glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)0);
-
     glEnableVertexAttribArray(1);
-
     glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)(2 * sizeof(float)));
-
     glBindVertexArray(0);
 
-
-    // ← DUMMY VAO/VBO for snow trail points
+    // DUMMY VAO/VBO for snow trail points
 
     glGenVertexArrays(1, &dummyPointVAO);
-
     glGenBuffers(1, &dummyPointVBO);
-
     glBindVertexArray(dummyPointVAO);
-
     glBindBuffer(GL_ARRAY_BUFFER, dummyPointVBO);
 
     float dummy = 0.0f;
 
     glBufferData(GL_ARRAY_BUFFER, sizeof(float), &dummy, GL_STATIC_DRAW);
-
     glEnableVertexAttribArray(0);
-
     glVertexAttribPointer(0, 1, GL_FLOAT, GL_FALSE, sizeof(float), (void*)0);
-
     glBindVertexArray(0);
-
-
 
 
     // Starting content
     vec3 myTownCenterPos = vec3(50.0f, 0.0f, 50.0f);
-
     terrain->flattenArea(myTownCenterPos, 15.0f);  // ✅ Flatten first
-
     buildings.push_back(std::make_unique<Building>(BuildingType::TOWN_CENTER, myTownCenterPos,0));
-
     buildings.back()->updateConstruction(10000.0f);
 
 
     vec3 enemyTownCenterPos = vec3(460.0f, 0.0f, 460.0f);
-
     terrain->flattenArea(enemyTownCenterPos, 15.0f);  // ✅ Flatten first
-
     buildings.push_back(std::make_unique<Building>(BuildingType::TOWN_CENTER, enemyTownCenterPos,1));
-
     buildings.back()->updateConstruction(10000.0f);
-
-
-    // Old way:
-    // units.push_back(std::make_unique<Unit>(UnitType::WORKER, vec3(260.0f, 0.0f, 260.0f)));
 
     // ---------------------------------------------------------
     // PERFORMANCE TEST: MASSIVE ARMY SPAWNER
     // ---------------------------------------------------------
-
 
     // Army 1: Player (Green/Team 0)
     //int rows = 10;
@@ -379,26 +331,24 @@ void createContext()
     //std::cout << "Total Units Spawned: " << units.size() << std::endl;
    
 
-// 3. BAKE STATIC OBSTACLES (Trees/Rocks)
+// BAKE STATIC OBSTACLES (Trees/Rocks)
     const std::vector<Obstacle>& envObstacles = environment->getObstacles();
     for (const auto& obs : envObstacles) {
         navGrid->updateArea(obs.position, obs.radius, true);
     }
 
-    // 4. BAKE BUILDINGS
+    // BAKE BUILDINGS
     for (const auto& b : buildings) {
         float r = (b->getType() == BuildingType::TOWN_CENTER) ? 12.0f : 8.0f;
         navGrid->updateArea(b->getPosition(), r, true);
     }
 
-    // =========================================================
-    // 5. BAKE MAP BORDERS (Invisible Walls)
-    // =========================================================
+    //  BAKE MAP BORDERS 
     // This ensures units never walk into the edge rocks or off the map
     int mapSize = 512;
     int borderThickness = 30; // Width of the rock border
 
-    // We loop through the grid pixels directly for 100% accuracy
+    // We loop through the grid pixels
     for (int x = 0; x < mapSize; x++) {
         for (int z = 0; z < mapSize; z++) {
 
@@ -407,15 +357,14 @@ void createContext()
                 z < borderThickness || z >= mapSize - borderThickness) {
 
                 // Mark as BLOCKED manually
-                // (We assume your NavGrid has a helper or we access the grid directly)
-                // If you don't have setBlocked(x,z), use updateArea with radius 0.5
-
                 navGrid->updateArea(glm::vec3(x, 0, z), 0.5f, true);
             }
         }
     }
 
-
+    //Particles
+    ParticleManager::init(new Drawable("models/sphere.obj"));
+    particleShaderProgram = loadShaders("ParticleShader.vertexshader", "ParticleShader.fragmentshader");
 }
 
 void checkGLError(const std::string& label) {
@@ -760,6 +709,28 @@ void handleInput() {
         }
     }
     lastC = pressC;
+
+    static bool lastG = false;
+    bool keyG = glfwGetKey(window, GLFW_KEY_G) == GLFW_PRESS;
+
+    if (keyG && !lastG) {
+        for (auto& u : units) {
+            if (u->isSelected() && u->getType() == UnitType::MELEE) {
+                glm::vec3 pos = u->getPosition();
+                float radius = 10.0f;
+
+                // --- 1. PHYSICAL HOLE (Deform the actual 3D Mesh) ---
+                // --- 1. PHYSICAL HOLE (Deform the actual 3D Mesh) ---
+                terrain->createHole(pos, radius, 4.0f); // 4.0 units deep
+
+                // --- 3. GAMEPLAY & PARTICLES ---
+                navGrid->updateArea(pos, radius, true); // Block pathfinding
+                ParticleManager::addExplosion(pos);     // Fire visuals
+                u->explode();                           // Kill unit
+            }
+        }
+    }
+    lastG = keyG;
 }
 
 
@@ -1211,8 +1182,8 @@ void drawCursor()
     glPushMatrix();
     glLoadIdentity();
     glColor3f(1.0f, 1.0f, 1.0f);
-    glLineWidth(2.0f);
-    const float len = 12.0f;
+    glLineWidth(4.0f);
+    const float len = 20.0f;
     glBegin(GL_LINES);
     glVertex2f(static_cast<float>(mx - len), static_cast<float>(my));
     glVertex2f(static_cast<float>(mx + len), static_cast<float>(my));
@@ -1257,6 +1228,13 @@ void initialize()
     // --- NATURE ---
     texTree = loadSOIL("models/hexagons_medieval.png");
     texRock = loadSOIL("models/hexagons_medieval.png");
+
+    fireTexture = loadSOIL("models/fire.png");
+    glBindTexture(GL_TEXTURE_2D, fireTexture);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 
     if (texTownCenter == 0) std::cout << "FAILED to load texTownCenter texture!" << std::endl;
     if (texBarracks == 0) std::cout << "FAILED to load texBarracks texture!" << std::endl;
@@ -1391,8 +1369,6 @@ void mainLoop() {
         mat4 P = camera->projectionMatrix;
         mat4 V = camera->viewMatrix;
 
-        cameraFrustum.update(P * V); // Combine Projection and View
-
         // 2. Prepare Batches (Separate by Type AND Animation)
          // --- WORKERS ---
         std::vector<glm::mat4> worker_IDLE, worker_WALK, worker_ATTACK;
@@ -1476,6 +1452,7 @@ void mainLoop() {
             // Safety: If unit died or deselect, exit mode
             if (unitCameraMode && !focusedUnit) unitCameraMode = false;
         }
+        cameraFrustum.update(P * V); // Combine Projection and View
 
         updateBuildingPlacement();
 
@@ -1492,8 +1469,8 @@ void mainLoop() {
         
 
         // -------------------------------------------------------
-                // UPDATE BUILDINGS & AUTO-SPAWN (With Spiral Formation)
-                // -------------------------------------------------------
+        // UPDATE BUILDINGS & AUTO-SPAWN (With Spiral Formation)
+        // -------------------------------------------------------
         for (auto& b : buildings) {
             b->updateConstruction(dt);
 
@@ -2092,6 +2069,21 @@ void mainLoop() {
 
         // Restore standard shader for UI/Lines
         glUseProgram(shaderProgram);
+
+        // -------------------------------------------------------
+        // 8. PARTICLE PASS (Add this after Units)
+        // -------------------------------------------------------
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE); // Additive "Glow"
+        glDepthMask(GL_FALSE);             // Don't hide particles behind each other
+
+        mat4 PV = P * V;
+        // Ensure particleShaderProgram is used
+        ParticleManager::updateAndRender(dt, camera->position, PV, particleShaderProgram, fireTexture);
+
+        glDepthMask(GL_TRUE);              // Reset depth writing
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA); // Reset blending
+        glDisable(GL_BLEND);
         
 
         // -------------------------------------------------------
@@ -2113,8 +2105,20 @@ void mainLoop() {
 void freeResources()
 {
     // 1. Clear Game Objects FIRST (while OpenGL context is still alive)
-    units.clear();         // <--- ADD THIS
+    units.clear();
     buildings.clear();
+
+    // ✅ ADDED: Clean up static SkinnedMesh pointers
+    // Since these were created with 'new', they must be deleted manually
+    delete Unit::minionMesh;  Unit::minionMesh = nullptr;
+    delete Unit::warriorMesh; Unit::warriorMesh = nullptr;
+    delete Unit::mageMesh;    Unit::mageMesh = nullptr;
+
+    // ✅ ADDED: Clean up Particle Manager
+    // Clear the active emitters and delete the shared quad/sphere model
+    ParticleManager::active_emitters.clear();
+    delete ParticleManager::particle_quad;
+    ParticleManager::particle_quad = nullptr;
 
     // 2. Delete Systems
     delete environment; environment = nullptr;
@@ -2130,6 +2134,11 @@ void freeResources()
     glDeleteProgram(snowTrailShader);
     glDeleteProgram(whiteShader);
 
+    // ✅ ADDED: Delete the Particle Shader
+    glDeleteProgram(particleShaderProgram);
+    //glDeleteProgram(skinnedShader);
+    glDeleteProgram(instancedShader);
+
     delete shadowMap; shadowMap = nullptr;
     delete snowTrailMap; snowTrailMap = nullptr;
 
@@ -2138,6 +2147,15 @@ void freeResources()
     glDeleteBuffers(1, &quadEBO);
     glDeleteVertexArrays(1, &dummyPointVAO);
     glDeleteBuffers(1, &dummyPointVBO);
+
+    // ✅ ADDED: Delete Textures 
+    // It's good practice to free the GPU memory used by textures
+    GLuint textures[] = {
+        texWorker, texWarrior, texMage,
+        texTownCenter, texBarracks, texArchery,
+        texTree, texRock, fireTexture
+    };
+    glDeleteTextures(sizeof(textures) / sizeof(GLuint), textures);
 
     // 4. Kill Context
     glfwTerminate();

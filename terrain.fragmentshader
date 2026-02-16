@@ -51,7 +51,7 @@ void main()
     vec3 L = normalize(LightDirection_cameraspace);
     float diff = max(dot(N, L), 0.0);
 
-    vec3 grassColor = vec3(0.30, 0.60, 0.30);
+    vec3 grassColor = vec3(0.50, 0.50, 0.50);
     vec3 snowColor = vec3(0.95, 0.97, 1.0);
 
     float snowAmount = texture(snowTrailMap, UV).r;

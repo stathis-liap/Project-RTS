@@ -65,7 +65,7 @@ SkinnedMesh::SkinnedMesh(const std::string& path) {
         unsigned int baseVertex = vertices.size();
         std::string meshName = mesh->mName.C_Str();
 
-        // 1. Load Vertices
+        // Load Vertices
         for (unsigned int i = 0; i < mesh->mNumVertices; i++) {
             Vertex vertex;
             vertex.Position = glm::vec3(mesh->mVertices[i].x, mesh->mVertices[i].y, mesh->mVertices[i].z);
@@ -79,7 +79,7 @@ SkinnedMesh::SkinnedMesh(const std::string& path) {
             vertices.push_back(vertex);
         }
 
-        // 2. Load Indices
+        // Load Indices
         for (unsigned int i = 0; i < mesh->mNumFaces; i++) {
             aiFace face = mesh->mFaces[i];
             for (unsigned int j = 0; j < face.mNumIndices; j++) {
@@ -87,10 +87,10 @@ SkinnedMesh::SkinnedMesh(const std::string& path) {
             }
         }
 
-        // 3. Load Bones (Standard Method)
+        // Load Bones (Standard Method)
         ExtractBoneWeightForVertices(vertices, mesh, m_Scene, baseVertex);
 
-        // 4. DETECT ITEMS TO FIX (Hats, Helmets, etc.)
+        // DETECT ITEMS TO FIX (Hats, Helmets, etc.)
         // We look for specific keywords in the mesh name
         if (meshName.find("Hat") != std::string::npos ||
             meshName.find("Helmet") != std::string::npos ||
@@ -102,9 +102,9 @@ SkinnedMesh::SkinnedMesh(const std::string& path) {
         }
     }
 
-    // ======================= 🔧 DEFERRED FIX PASS (SIMPLIFIED) 🔧 =======================
+    // DEFERRED FIX PASS 
     for (const auto& fix : itemsToFix) {
-        std::cout << "🔧 Applying Simple Fix to: " << fix.name << "..." << std::endl;
+        //std::cout << "🔧 Applying Simple Fix to: " << fix.name << "..." << std::endl;
 
         int headBoneID = -1;
 
@@ -114,31 +114,26 @@ SkinnedMesh::SkinnedMesh(const std::string& path) {
 
         if (headBoneID != -1) {
 
-            // 🚫 REMOVED: 'toModelSpace' calculation.
-            // We assume the geometry is already at the correct height in the file.
-
-            // 🛠️ MANUAL ADJUSTMENT ONLY 🛠️
-            // Use this ONLY for small tweaks (e.g. if it clips into the skull)
+            // MANUAL ADJUSTMENT ONLY 
             float manualY = 0.0f;
 
             if (fix.name.find("Hat") != std::string::npos) {
                 manualY = 0.5f; // Small tweak for Mage Hat
             }
             else if (fix.name.find("Helmet") != std::string::npos) {
-                manualY = 0.0f;   // Warrior Helmet likely needs no change now
+                manualY = 0.0f;   // Warrior Helmet needs no change now
             }
 
             glm::mat4 heightCorrection = glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, manualY, 0.0f));
 
-            // Apply ONLY the manual tweak (if any)
+            // Apply ONLY the manual tweak 
             for (size_t v = fix.baseVertex; v < fix.baseVertex + fix.count; v++) {
 
-                // 1. Apply small manual offset
+                // Apply small manual offset
                 glm::vec4 pos = glm::vec4(vertices[v].Position, 1.0f);
                 vertices[v].Position = glm::vec3(heightCorrection * pos);
-                // vertices[v].Normal = ... (No rotation, so normals usually fine to leave alone for pure translation)
 
-                // 2. FORCE BINDING (This was the real fix all along)
+                // FORCE BINDING 
                 for (int i = 0; i < 4; i++) {
                     vertices[v].m_BoneIDs[i] = -1;
                     vertices[v].m_Weights[i] = 0.0f;
@@ -146,10 +141,10 @@ SkinnedMesh::SkinnedMesh(const std::string& path) {
                 vertices[v].m_BoneIDs[0] = headBoneID;
                 vertices[v].m_Weights[0] = 1.0f;
             }
-            std::cout << "✅ SUCCESS: " << fix.name << " rigidly attached to Head ID: " << headBoneID << std::endl;
+            std::cout << "SUCCESS: " << fix.name << " rigidly attached to Head ID: " << headBoneID << std::endl;
         }
         else {
-            std::cerr << "❌ ERROR: Head bone not found for " << fix.name << std::endl;
+            std::cerr << "ERROR: Head bone not found for " << fix.name << std::endl;
         }
     }
 
@@ -233,9 +228,8 @@ void SkinnedMesh::setupMesh() {
     glBindVertexArray(0);
 }
 
-// ✅ ANIMATION HELPERS
+// ANIMATION HELPERS
 
-// In SkinnedMesh.cpp
 void SkinnedMesh::LoadAnimation(const std::string& filePath, const std::string& alias, int index) {
     Assimp::Importer* importer = new Assimp::Importer();
     m_AnimationImporters.push_back(importer);
@@ -247,9 +241,9 @@ void SkinnedMesh::LoadAnimation(const std::string& filePath, const std::string& 
         return;
     }
 
-    // 🔍 DEBUG: Print all animations in this file so we know which index to pick!
+    // DEBUG: Print all animations in this file so we know which index to pick!
     if (index == 0) { // Only print this once per file to avoid spam
-        std::cout << "--- Animations found in " << filePath << " ---" << std::endl;
+        //std::cout << "--- Animations found in " << filePath << " ---" << std::endl;
         for (unsigned int i = 0; i < scene->mNumAnimations; i++) {
             std::cout << "   [" << i << "] " << scene->mAnimations[i]->mName.data
                 << " (Duration: " << scene->mAnimations[i]->mDuration << ")" << std::endl;
@@ -263,7 +257,7 @@ void SkinnedMesh::LoadAnimation(const std::string& filePath, const std::string& 
         return;
     }
 
-    // ✅ LOAD THE SPECIFIC INDEX
+    // LOAD THE SPECIFIC INDEX
     aiAnimation* anim = scene->mAnimations[index];
     m_Animations[alias] = anim;
 
@@ -291,7 +285,7 @@ void SkinnedMesh::PlayAnimation(const std::string& animationName) {
 
 const aiNodeAnim* SkinnedMesh::FindNodeAnim(const aiAnimation* animation, const std::string& nodeName)
 {
-    // 1. Try Exact Match (Fastest)
+    // Try Exact Match (Fastest)
     for (unsigned int i = 0; i < animation->mNumChannels; i++) {
         const aiNodeAnim* nodeAnim = animation->mChannels[i];
         if (std::string(nodeAnim->mNodeName.data) == nodeName) {
@@ -299,7 +293,7 @@ const aiNodeAnim* SkinnedMesh::FindNodeAnim(const aiAnimation* animation, const 
         }
     }
 
-    // 2. Try "Smart Search" (Matches suffixes)
+    // Try "Smart Search" (Matches suffixes)
     // Example: If Node is "hips", this finds "Rig_Medium_hips" or "mixamorig:hips"
     for (unsigned int i = 0; i < animation->mNumChannels; i++) {
         const aiNodeAnim* nodeAnim = animation->mChannels[i];
@@ -380,12 +374,11 @@ glm::vec3 SkinnedMesh::InterpolateScale(float animationTime, const aiNodeAnim* n
     return glm::mix(glm::vec3(start.x, start.y, start.z), glm::vec3(end.x, end.y, end.z), factor);
 }
 
-// ✅ ANIMATION: Traverse skeleton hierarchy
+// ANIMATION: Traverse skeleton hierarchy
 void SkinnedMesh::ReadNodeHierarchy(float animationTime, const aiNode* pNode, const glm::mat4& parentTransform) {
     std::string nodeName(pNode->mName.data);
     glm::mat4 nodeTransform = ConvertMatrix(pNode->mTransformation);
 
-    // ✅ FIX: Use 'm_CurrentAnimation' (External File) instead of 'm_Scene' (Mesh File)
     if (m_CurrentAnimation) {
         const aiAnimation* animation = m_CurrentAnimation;
         const aiNodeAnim* nodeAnim = FindNodeAnim(animation, nodeName);
@@ -393,12 +386,12 @@ void SkinnedMesh::ReadNodeHierarchy(float animationTime, const aiNode* pNode, co
         // Mixamo/Synty Prefix Fix (Handles cases like "mixamorig:Hips" vs "Hips")
         if (!nodeAnim) {
             std::string cleanName = nodeName;
-            // 1. Try removing "Rig_Medium" prefix (Common in Synty)
+            // Try removing "Rig_Medium" prefix (Common in Synty)
             if (cleanName.find("Rig_Medium_") != std::string::npos) {
                 cleanName = cleanName.substr(11); // Remove first 11 chars
                 nodeAnim = FindNodeAnim(animation, cleanName);
             }
-            // 2. Try removing colon prefix (Common in Mixamo)
+            // Try removing colon prefix (Common in Mixamo)
             if (!nodeAnim) {
                 size_t colonPos = nodeName.find(':');
                 if (colonPos != std::string::npos) {
@@ -422,7 +415,7 @@ void SkinnedMesh::ReadNodeHierarchy(float animationTime, const aiNode* pNode, co
         }
     }
 
-    // ======================= 🦒 NECK FIX 🦒 =======================
+    // NECK FIX 
     // Keep this if you need the head offset
     if (nodeName == "head" || nodeName == "Head") {
         float neckHeight = 1.25f;
@@ -448,7 +441,6 @@ void SkinnedMesh::ReadNodeHierarchy(float animationTime, const aiNode* pNode, co
 void SkinnedMesh::UpdateAnimation(float timeInSeconds) {
     if (!m_CurrentAnimation) return;
 
-    // --- DEBUG: RUN THIS ONCE TO SEE THE NAMES ---
     static bool debugNamesPrinted = false;
     if (!debugNamesPrinted) {
         std::cout << "\n========== ANIMATION DEBUGGER ==========" << std::endl;
@@ -485,16 +477,16 @@ void SkinnedMesh::Draw(GLuint shaderProgram) {
 
 void SkinnedMesh::SetupInstancing()
 {
-    // 1. Generate the Instance Buffer
+    // Generate the Instance Buffer
     glGenBuffers(1, &instanceVBO);
     glBindBuffer(GL_ARRAY_BUFFER, instanceVBO);
     // Initialize with 0 size, we will fill it in DrawInstanced
     glBufferData(GL_ARRAY_BUFFER, 0, nullptr, GL_DYNAMIC_DRAW);
 
-    // 2. Bind the existing VAO to enable attributes on it
+    //  Bind the existing VAO to enable attributes on it
     glBindVertexArray(VAO);
 
-    // 3. Set up Attribute Pointers for the Matrix (mat4 = 4 x vec4)
+    // Set up Attribute Pointers for the Matrix (mat4 = 4 x vec4)
     // Locations 5, 6, 7, 8 match the shader layout
     std::size_t vec4Size = sizeof(glm::vec4);
 
@@ -510,7 +502,7 @@ void SkinnedMesh::SetupInstancing()
     glEnableVertexAttribArray(8);
     glVertexAttribPointer(8, 4, GL_FLOAT, GL_FALSE, 4 * vec4Size, (void*)(3 * vec4Size));
 
-    // 4. Set Divisors (Tell OpenGL to update these once per Instance, not per Vertex)
+    // Set Divisors (Tell OpenGL to update these once per Instance, not per Vertex)
     glVertexAttribDivisor(5, 1);
     glVertexAttribDivisor(6, 1);
     glVertexAttribDivisor(7, 1);
@@ -525,17 +517,17 @@ void SkinnedMesh::DrawInstanced(GLuint shaderProgram, const std::vector<glm::mat
 {
     if (models.empty()) return;
 
-    // 1. Update Instance Buffer (using the variable 'instanceVBO' from your header)
+    // Update Instance Buffer (using the variable 'instanceVBO' from your header)
     glBindBuffer(GL_ARRAY_BUFFER, instanceVBO);
     glBufferData(GL_ARRAY_BUFFER, models.size() * sizeof(glm::mat4), &models[0], GL_DYNAMIC_DRAW);
     glBindBuffer(GL_ARRAY_BUFFER, 0);
 
-    // 2. Bind the Single VAO
+    // Bind the Single VAO
     glBindVertexArray(VAO);
 
-    // 3. Draw using the 'indices' vector size
+    // Draw using the 'indices' vector size
     glDrawElementsInstanced(GL_TRIANGLES, (GLsizei)indices.size(), GL_UNSIGNED_INT, 0, (GLsizei)models.size());
 
-    // 4. Cleanup
+    // Cleanup
     glBindVertexArray(0);
 }
