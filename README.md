@@ -8,7 +8,7 @@ A high-performance C++/OpenGL RTS Engine featuring procedural terrain, skeletal 
 
 **🚀 Overview**
 
-This project is a custom-built Real-Time Strategy (RTS) engine developed for the Graphics and Virtual Reality course (February 2026). It demonstrates advanced computer graphics techniques, including procedural world generation, unit AI, and optimized rendering for massive unit counts.
+This project is a custom-built Real-Time Strategy (RTS) engine developed for the Graphics and Virtual Reality course (February 2026) **that was graded with a perfect scrore (10/10)**. It demonstrates advanced computer graphics techniques, including procedural world generation, unit AI, and optimized rendering for massive unit counts.
 
 The game is set in a winter landscape where players manage resources, construct buildings with gradual visual progression, and command an army of animated skeletal units.
 
