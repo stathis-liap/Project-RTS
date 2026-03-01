@@ -1,6 +1,3 @@
-// ============================================================
-// Building.h
-// ============================================================
 #pragma once
 #include <glm/glm.hpp>
 #include <GL/glew.h>
@@ -9,8 +6,6 @@
 
 class Mesh;
 
-// ✅ CRITICAL FIX: Add this line here!
-// This tells the compiler "UnitType exists" so it can parse the function below.
 enum class UnitType;
 
 enum class BuildingType {
@@ -37,7 +32,6 @@ public:
     Building(BuildingType type, const glm::vec3& pos, int teamID, const std::string& meshPath = "");
     ~Building();
 
-    // In Building.h
     void draw(const glm::mat4& view, const glm::mat4& projection,
         GLuint shaderProgram, float passedAlpha,
         glm::vec3 tint = glm::vec3(0.8f, 0.8f, 0.8f)); 
@@ -61,10 +55,10 @@ public:
     int getTeam() const { return teamID_; }
     bool isDead() const { return currentHealth_ <= 0; }
 
-    // ✅ Now the compiler knows 'UnitType' is a valid type
+    
     UnitType updateAutoSpawning(float dt);
 
-    // ✅ NEW: Cap Logic
+    // Cap Logic
     int getSpawnedCount() const { return spawnedCount_; }
     bool isCapReached() const { return spawnedCount_ >= MAX_UNIT_CAP; }
 
@@ -97,7 +91,6 @@ private:
     float autoSpawnTimer_ = 0.0f;
     const float SPAWN_INTERVAL = 2.0f; // Seconds between units
 
-    // ✅ NEW: Unit Cap Variables
     int spawnedCount_ = 0;
     const int MAX_UNIT_CAP = 10;
 

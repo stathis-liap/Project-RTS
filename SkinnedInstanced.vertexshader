@@ -13,7 +13,7 @@ layout(location = 4) in vec4 weights;
 layout(location = 5) in mat4 instanceModelMatrix; 
 
 // ==========================================
-// OUTPUTS (Must match Fragment Shader Inputs exactly)
+// OUTPUTS 
 // ==========================================
 out vec2 UV;
 out vec3 Position_worldspace;
@@ -80,7 +80,7 @@ void main() {
     // Shadow Map
     FragPosLightSpace = lightSpaceMatrix * vec4(Position_worldspace, 1.0);
 
-    // ✅ VISIBILITY FIX: Set to -1.0 so logic "if > 0.001 discard" is FALSE.
+    // VISIBILITY FIX: Set to -1.0 so logic "if > 0.001 discard" is FALSE.
     ClipHeight = -1.0f; 
 
     // UVs

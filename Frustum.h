@@ -1,4 +1,4 @@
-#pragma once  // <--- This prevents the "Redefinition" error
+#pragma once 
 
 #include <glm/glm.hpp>
 

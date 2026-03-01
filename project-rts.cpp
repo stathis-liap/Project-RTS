@@ -268,14 +268,19 @@ void createContext()
 
     // Starting content
     vec3 myTownCenterPos = vec3(50.0f, 0.0f, 50.0f);
-    terrain->flattenArea(myTownCenterPos, 15.0f);  // ✅ Flatten first
+    terrain->flattenArea(myTownCenterPos, 15.0f);  // Flatten first
     buildings.push_back(std::make_unique<Building>(BuildingType::TOWN_CENTER, myTownCenterPos,0));
     buildings.back()->updateConstruction(10000.0f);
 
 
     vec3 enemyTownCenterPos = vec3(460.0f, 0.0f, 460.0f);
-    terrain->flattenArea(enemyTownCenterPos, 15.0f);  // ✅ Flatten first
+    terrain->flattenArea(enemyTownCenterPos, 15.0f);  //Flatten first
     buildings.push_back(std::make_unique<Building>(BuildingType::TOWN_CENTER, enemyTownCenterPos,1));
+    buildings.back()->updateConstruction(10000.0f);
+
+    vec3 enemyBarracksCenterPos = vec3(50.0f, 0.0f, 120.0f);
+    terrain->flattenArea(enemyBarracksCenterPos, 15.0f);  //Flatten first
+    buildings.push_back(std::make_unique<Building>(BuildingType::BARRACKS, enemyBarracksCenterPos, 1));
     buildings.back()->updateConstruction(10000.0f);
 
     // ---------------------------------------------------------
@@ -628,7 +633,7 @@ void handleInput() {
         isRightDragging = true;
         dragStartWorld = getWorldPosUnderCursor(); // Reuse global for start pos
     }
-    // Note: We use the same globals for drag start/end to simplify visuals, 
+    // We use the same globals for drag start/end to simplify visuals, 
     // but logic handles them separately below.
     if (isRightDragging) dragEndWorld = getWorldPosUnderCursor();
 
@@ -664,7 +669,7 @@ void handleInput() {
                 // Copy the shared path
                 std::vector<vec3> myPersonalPath = sharedPath;
 
-                // ✅ KEY FIX: Change the LAST point to be their unique spot
+                //Change the LAST point to be their unique spot
                 if (!myPersonalPath.empty()) {
                     myPersonalPath.back() = clickPos + offset;
                 }
@@ -717,7 +722,7 @@ void handleInput() {
         for (auto& u : units) {
             if (u->isSelected() && u->getType() == UnitType::MELEE) {
                 glm::vec3 pos = u->getPosition();
-                float radius = 10.0f;
+                float radius = 12.0f;
 
                 // --- 1. PHYSICAL HOLE (Deform the actual 3D Mesh) ---
                 // --- 1. PHYSICAL HOLE (Deform the actual 3D Mesh) ---
@@ -756,7 +761,7 @@ void drawSelectionBox() {
     glPushMatrix();
     glLoadIdentity();
 
-    // ✅ COLOR BASED ON MODE
+    // COLOR BASED ON MODE
     vec3 col;
     if (currentMode == InputMode::UNIT_SELECT) col = vec3(0.0f, 1.0f, 0.0f);     // Green
     else if (currentMode == InputMode::RESOURCE_SELECT) col = vec3(1.0f, 1.0f, 0.0f); // Yellow
@@ -773,6 +778,7 @@ void drawSelectionBox() {
     glEnd();
 
     // Fill
+    glDisable(GL_CULL_FACE);
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
     glColor4f(col.x, col.y, col.z, 0.2f);
@@ -788,11 +794,12 @@ void drawSelectionBox() {
     glMatrixMode(GL_PROJECTION);
     glPopMatrix();
     glEnable(GL_DEPTH_TEST);
+    glEnable(GL_CULL_FACE);
 }
 
 // Render: Selection Rings under units
 void drawSelectionRings(mat4 V, mat4 P) {
-    glDisable(GL_DEPTH_TEST);
+    //glDisable(GL_DEPTH_TEST);
     glUseProgram(0);
 
     glMatrixMode(GL_PROJECTION);
@@ -848,7 +855,7 @@ void drawSelectionRings(mat4 V, mat4 P) {
             }
         }
 
-        // ✅ B. Enemy Buildings (NEW)
+        // B. Enemy Buildings (NEW)
         for (const auto& b : buildings) {
             if (b->getTeam() == 1) { // Enemy Building
                 vec3 pos = b->getPosition();
@@ -973,7 +980,7 @@ void updateBuildingPlacement()
         else if (currentPlaceType == BuildingType::BARRACKS) buildingRadius = 12.0f;
         else if (currentPlaceType == BuildingType::SHOOTING_RANGE) buildingRadius = 10.0f;
 
-        // ✅ VALIDITY CHECK LOOP
+        // VALIDITY CHECK LOOP
         // Assume valid until we hit a block
         bool valid = true;
 
@@ -1000,7 +1007,7 @@ void updateBuildingPlacement()
             }
         }
 
-        // ✅ Update the global variable for the renderer to see
+        // Update the global variable for the renderer to see
         isPlacementValid = valid;
     }
 
@@ -1012,7 +1019,7 @@ void updateBuildingPlacement()
 
     if (clicked && !lastClick && placingBuilding) {
 
-        // ✅ BLOCK PLACEMENT IF INVALID
+        // BLOCK PLACEMENT IF INVALID
         if (!isPlacementValid) {
             std::cout << "Cannot place here: Area blocked!" << std::endl;
         }
@@ -1058,9 +1065,9 @@ void drawBuildingUI()
     // SAFETY BLOCK (Crucial for 2D UI)
     // -----------------------------------------------------------
     glDisable(GL_DEPTH_TEST);
-    glDisable(GL_CULL_FACE);  // <--- The likely fix for "Black Box"
+    glDisable(GL_CULL_FACE);  
     glDisable(GL_LIGHTING);
-    glDisable(GL_TEXTURE_2D); // <--- The likely fix for "Black Texture"
+    glDisable(GL_TEXTURE_2D); 
 
     glUseProgram(0);
 
@@ -1203,7 +1210,7 @@ void initialize()
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
 
-    // ✅ Use Compatibility Profile to support glBegin/glEnd logic
+    // Use Compatibility Profile to support glBegin/glEnd logic
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_COMPAT_PROFILE);
     glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_FALSE);
 
@@ -1217,7 +1224,7 @@ void initialize()
 
     glfwSetInputMode(window, GLFW_STICKY_KEYS, GL_TRUE);
 
-    // ✅ MOUSE MUST BE NORMAL FOR RTS
+    // MOUSE MUST BE NORMAL FOR RTS
     glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
 
     // --- BUILDINGS ---
@@ -1261,7 +1268,7 @@ void initialize()
     logGLParameters();
 
     // =========================================================
-    // ✅ LOAD ANIMATIONS HERE
+    // LOAD ANIMATIONS 
     // =========================================================
     std::cout << "--- Loading Unit Meshes & Animations ---" << std::endl;
 
@@ -1370,7 +1377,7 @@ void mainLoop() {
         mat4 V = camera->viewMatrix;
 
         // 2. Prepare Batches (Separate by Type AND Animation)
-         // --- WORKERS ---
+        // --- WORKERS ---
         std::vector<glm::mat4> worker_IDLE, worker_WALK, worker_ATTACK;
         // --- WARRIORS ---
         std::vector<glm::mat4> warrior_IDLE, warrior_WALK, warrior_ATTACK;
@@ -1481,7 +1488,7 @@ void mainLoop() {
                 // --- 1. Define Rally Point (In Front of Building) ---
                 glm::vec3 buildingPos = b->getPosition();
 
-                // ✅ Calculate "Front" Vector based on Building Rotation (160 degrees)
+                //  Calculate "Front" Vector based on Building Rotation (160 degrees)
                 // We convert 160 degrees to radians to get the direction the door is facing.
                 float rotationRadians = glm::radians(160.0f);
 
@@ -1612,7 +1619,7 @@ void mainLoop() {
         // 
         glCullFace(GL_FRONT);
 
-        // ✅ We can now DISABLE the offset entirely!
+        // We can now DISABLE the offset entirely!
         glDisable(GL_POLYGON_OFFSET_FILL);
 
         // A. STATIC OBJECTS (Terrain, Trees, Buildings) -> Use Standard Shadow Shader
@@ -1632,7 +1639,7 @@ void mainLoop() {
         for (const auto& b : buildings) {
             mat4 model = translate(mat4(1.0f), b->getPosition());
 
-            // ✅ ROTATE 180 DEGREES (Add this line)
+            // ROTATE 180 DEGREES (Add this line)
             model = glm::rotate(model, glm::radians(160.0f), glm::vec3(0.0f, 1.0f, 0.0f));
 
             float scale = (b->getType() == BuildingType::TOWN_CENTER) ? 10.0f : ((b->getType() == BuildingType::BARRACKS) ? 7.0f : 5.0f);
@@ -1834,12 +1841,11 @@ void mainLoop() {
         // 1. Prepare Texture Unit 0
         glActiveTexture(GL_TEXTURE0);
 
-        // ✅ FIX 1: Tell Shader to use Textures
+        // Tell Shader to use Textures
         glUniform1i(glGetUniformLocation(shaderProgram, "useTexture"), 1);
         glUniform1i(glGetUniformLocation(shaderProgram, "diffuseColorSampler"), 0); // Read from Unit 0
 
-        // ✅ FIX 2: Reset Material Colors to WHITE
-        // If Kd is yellow/grey, the texture gets tinted. We want pure white for textures.
+        //  Reset Material Colors to WHITE
         glUniform4f(KdLocation, 1.0f, 1.0f, 1.0f, 1.0f);
         glUniform4f(KaLocation, 0.2f, 0.2f, 0.2f, 1.0f);
         glUniform4f(KsLocation, 0.1f, 0.1f, 0.1f, 1.0f);
@@ -1878,7 +1884,7 @@ void mainLoop() {
         for (const auto& b : buildings) {
             if (cameraFrustum.isSphereVisible(b->getPosition(), 15.0f)) {
 
-                // ✅ SWITCH TEXTURE BASED ON TYPE
+                // SWITCH TEXTURE BASED ON TYPE
                 if (b->getType() == BuildingType::TOWN_CENTER) {
                     glBindTexture(GL_TEXTURE_2D, texTownCenter);
                 }
@@ -1924,7 +1930,7 @@ void mainLoop() {
         // 1. Prepare Texture Unit 0
         glActiveTexture(GL_TEXTURE0);
 
-        // ✅ FIX 3: Enable Textures for Instanced Shader
+        // Enable Textures for Instanced Shader
         glUniform1i(glGetUniformLocation(instancedShader, "useTexture"), 1);
         glUniform1i(glGetUniformLocation(instancedShader, "diffuseColorSampler"), 0);
 
@@ -2058,13 +2064,6 @@ void mainLoop() {
                 for (int i = 0; i < bones.size(); i++) glUniformMatrix4fv(glGetUniformLocation(instancedShader, ("finalBonesMatrices[" + std::to_string(i) + "]").c_str()), 1, GL_FALSE, &bones[i][0][0]);
                 Unit::mageMesh->DrawInstanced(instancedShader, mage_ATTACK);
             }
-        }
-
-        // Debug Stats
-        static int frameCounter = 0;
-        frameCounter++;
-        if (frameCounter > 60) {
-            frameCounter = 0;
         }
 
         // Restore standard shader for UI/Lines

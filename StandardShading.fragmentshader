@@ -6,7 +6,7 @@ in vec3 Position_cameraspace;
 in vec3 Normal_cameraspace;
 in vec2 UV;
 in vec3 LightDirection_cameraspace;
-in vec4 FragPosLightSpace;  // ← NEW: from vertex shader
+in vec4 FragPosLightSpace;  // from vertex shader
 
 in float ClipHeight;
 
@@ -17,8 +17,8 @@ out vec4 fragmentColor;
 uniform int useTexture = 0;
 uniform sampler2D diffuseColorSampler;
 uniform sampler2D specularColorSampler;
-uniform sampler2D shadowMap;         // ← NEW: depth texture from shadow pass
-uniform mat4 lightSpaceMatrix;       // ← NEW: for debugging/reconstruction if needed (optional)
+uniform sampler2D shadowMap;         // depth texture from shadow pass
+uniform mat4 lightSpaceMatrix;       // for debugging/reconstruction if needed (optional)
 uniform float constructionProgress;
 
 // Light
@@ -57,14 +57,13 @@ float calculateShadow(vec4 fragPosLightSpace)
     
     float currentDepth = projCoords.z;
     
-    // ✅ REDUCED bias - was too aggressive and removing shadows
     vec3 normal = normalize(Normal_cameraspace);
     vec3 lightDir = normalize(LightDirection_cameraspace);
     float cosTheta = clamp(dot(normal, lightDir), 0.0, 1.0);
     
     // Much smaller bias values
     float bias = 0.00005 + (1.0 - cosTheta) * 0.0002;
-    bias = clamp(bias, 0.00001, 0.0005);  // ✅ 10x smaller than before
+    bias = clamp(bias, 0.00001, 0.0005);  
     
     // PCF 3x3 sampling for soft shadows
     float shadow = 0.0;
@@ -89,7 +88,7 @@ void main()
         discard;
     }
    
-    // Optional: fade effect near the construction edge ONLY during construction
+    // fade effect near the construction edge ONLY during construction
     float edgeFade = 1.0;
     if (constructionProgress < 1.0 && ClipHeight > -0.5) { // Within 0.5 units of edge
         edgeFade = smoothstep(-0.5, 0.0, ClipHeight);

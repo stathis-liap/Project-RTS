@@ -9,16 +9,16 @@ out vec3 Normal_cameraspace;
 out vec2 UV;
 out vec3 LightDirection_cameraspace;
 out vec4 FragPosLightSpace;
-out float ClipHeight;  // ✅ NEW: for construction clipping
+out float ClipHeight;  // for construction clipping
 
 uniform mat4 P;
 uniform mat4 V;
 uniform mat4 M;
 uniform mat4 lightSpaceMatrix;
 uniform vec3 lightDirection_worldspace;
-uniform float constructionProgress;  // ✅ NEW: 0.0 to 1.0
-uniform float buildingHeight;         // ✅ NEW: max height of building
-uniform vec3 buildingBasePos;         // ✅ NEW: building base position
+uniform float constructionProgress;  // 0.0 to 1.0
+uniform float buildingHeight;         // max height of building
+uniform vec3 buildingBasePos;         // building base position
 
 void main()
 {

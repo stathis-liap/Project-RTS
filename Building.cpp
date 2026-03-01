@@ -3,13 +3,13 @@
 #include <iostream>
 #include <fstream>
 #include <stdexcept>
-#include "Unit.h" // Need this to know about UnitType enum
+#include "Unit.h" 
 
 Building::Building(BuildingType type, const glm::vec3& pos, int teamID, const std::string& meshPath)
     : type_(type), position_(pos), teamID_(teamID), mesh_(nullptr),
     currentHealth_(100.0f), buildProgress_(0.0f), isConstructed_(false)
 {
-    // ✅ Initialize stats first
+    // Initialize stats first
     initializeStats();
 
     std::string path = meshPath;
@@ -56,7 +56,7 @@ Building::Building(BuildingType type, const glm::vec3& pos, int teamID, const st
         }
     }
 
-    // ✅ Calculate building dimensions and base position
+    // Calculate building dimensions and base position
     float scale;
     if (type_ == BuildingType::TOWN_CENTER) {
         scale = 1.0f;
@@ -75,7 +75,7 @@ Building::Building(BuildingType type, const glm::vec3& pos, int teamID, const st
         buildingHeight_ = scale * 1.0f;
     }
 
-    // ✅ Store base position (bottom of building on ground)
+    // Store base position (bottom of building on ground)
     basePosition_ = pos;
     basePosition_.y = pos.y;  // Ground level
 
@@ -89,7 +89,7 @@ Building::~Building()
     mesh_ = nullptr;
 }
 
-// ✅ Initialize building stats based on type
+// Initialize building stats based on type
 void Building::initializeStats()
 {
     switch (type_) {
@@ -128,9 +128,6 @@ void Building::initializeStats()
 void Building::draw(const glm::mat4& view, const glm::mat4& projection,
     GLuint shaderProgram, float passedAlpha, glm::vec3 tint)
 {
-    // -----------------------------------------------------------
-    // 1. SETUP (Scale & Matrix)
-    // -----------------------------------------------------------
     float scale = 1.0f;
     if (type_ == BuildingType::TOWN_CENTER) scale = 10.0f;
     else if (type_ == BuildingType::BARRACKS) scale = 10.0f;
@@ -141,7 +138,7 @@ void Building::draw(const glm::mat4& view, const glm::mat4& projection,
     // 1. Move to World Position
     model = glm::translate(model, basePosition_);
 
-    // 2. ✅ ROTATE 180 DEGREES (Add this line)
+    // 2. ROTATE 180 DEGREES 
     model = glm::rotate(model, glm::radians(160.0f), glm::vec3(0.0f, 1.0f, 0.0f));
 
     // 3. Sit on ground offset (if needed)
@@ -155,45 +152,40 @@ void Building::draw(const glm::mat4& view, const glm::mat4& projection,
     glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "V"), 1, GL_FALSE, &view[0][0]);
     glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "P"), 1, GL_FALSE, &projection[0][0]);
 
-    // -----------------------------------------------------------
-    // 2. DETERMINE VISUAL STATE
-    // -----------------------------------------------------------
+    
+    // DETERMINE VISUAL STATE
     float finalAlpha = 1.0f;
     float clipProgress = 1.0f;
 
-    // CASE A: PREVIEW MODE
-    // If we passed a transparency value (like 0.3), treat it as a preview.
+    // PREVIEW MODE
     // Show the whole building (clip = 1.0), but transparent.
     if (passedAlpha < 0.99f) {
         finalAlpha = 0.3f; // 70% transparent
         clipProgress = 1.0f; // No clipping, show full ghost
     }
-    // CASE B: UNDER CONSTRUCTION
+    // UNDER CONSTRUCTION
     else if (!isConstructed_) {
-        // Fade from 50% (0.5) to 100% (1.0) based on progress
         finalAlpha = 0.5f + (0.5f * buildProgress_);
         
         // Grow from bottom up
         clipProgress = buildProgress_;
     }
-    // CASE C: COMPLETED BUILDING
+    // COMPLETED BUILDING
     else {
         finalAlpha = 1.0f; // Solid
         clipProgress = 1.0f; // Full height
     }
 
-    // -----------------------------------------------------------
-    // 3. SEND UNIFORMS
-    // -----------------------------------------------------------
+
+    // SEND UNIFORMS
 
     // Send Transparency & Color
     GLuint kdLoc = glGetUniformLocation(shaderProgram, "mtl.Kd");
     if (kdLoc != -1) {
-        // ✅ USE THE TINT COLOR HERE
+        // USE THE TINT COLOR HERE
         glUniform4f(kdLoc, tint.r, tint.g, tint.b, finalAlpha);
     }
 
-    // ... (Keep the rest of uniform sending & mesh drawing) ...
     float worldHeight = (2.0f * scale) + 50.0f;
     glm::vec3 basePos = basePosition_;
 
@@ -213,7 +205,7 @@ void Building::setPosition(const glm::vec3& pos)
     position_ = basePosition_;
 }
 
-// ✅ Update building construction over time
+// Update building construction over time
 void Building::updateConstruction(float deltaTime)
 {
     if (isConstructed_) return;
@@ -228,7 +220,7 @@ void Building::updateConstruction(float deltaTime)
     }
 }
 
-// ✅ Take damage
+// Take damage
 void Building::takeDamage(float damage)
 {
     if (!isConstructed_) return;
@@ -240,7 +232,7 @@ void Building::takeDamage(float damage)
     }
 }
 
-// ✅ Repair building
+// Repair building
 void Building::repair(float amount)
 {
     if (!isConstructed_) return;
@@ -261,25 +253,24 @@ ResourceCost Building::getStaticCost(BuildingType type) {
     }
 }
 
-// ----------------------------------------------------------------------
+
 // AUTO SPAWNING LOGIC
-// ----------------------------------------------------------------------
 
 UnitType Building::updateAutoSpawning(float dt)
 {
-    // 1. Only spawn if fully constructed, alive, AND below cap
+    // Only spawn if fully constructed, alive, AND below cap
     if (!isConstructed_ || currentHealth_ <= 0.0f) return (UnitType)-1;
 
-    if (spawnedCount_ >= MAX_UNIT_CAP) return (UnitType)-1; // ✅ STOP if cap reached
+    if (spawnedCount_ >= MAX_UNIT_CAP) return (UnitType)-1; // STOP if cap reached
 
-    // 2. Advance Timer
+    // Advance Timer
     autoSpawnTimer_ += dt;
 
-    // 3. Trigger Spawn
+    // Trigger Spawn
     if (autoSpawnTimer_ >= SPAWN_INTERVAL) {
         autoSpawnTimer_ = 0.0f;
 
-        // ✅ Increment Counter
+        // Increment Counter
         spawnedCount_++;
 
         switch (type_) {
@@ -293,7 +284,7 @@ UnitType Building::updateAutoSpawning(float dt)
     return (UnitType)-1;
 }
 
-// ✅ Get building height (for clipping calculations)
+// Get building height (for clipping calculations)
 float Building::getBuildingHeight() const
 {
     return buildingHeight_;

@@ -31,15 +31,16 @@ void Terrain::generate()
 {
     generateHeightmap();
     computeNormals();
-    buildMesh();
     applyDiagonalSymmetry();
+    buildMesh();
+    
 }
 
 float Terrain::hash(int xi, int zi) const
 {
     int seed = xi * 45678 + zi * 345678 + 12345;
     seed = (seed << 13) ^ seed;
-    return (1.0f - ((seed * (seed * seed * 12345 + 789123) + 1234567890) & 0x7fffffff) / 1234567890.0f); //returns value between -1 and 1
+    return (1.0f - ((seed * (seed * seed * 12345 + 789123) + 1234567890) & 0x7fffffff) / 2147483647.0f); //returns value between 0 and 1
 }
 
 float Terrain::noise(float x, float z) const
@@ -178,7 +179,7 @@ void Terrain::buildMesh()
     glBindVertexArray(vao);
 
     glBindBuffer(GL_ARRAY_BUFFER, vbo);
-    glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(TerrainVertex), vertices.data(), GL_DYNAMIC_DRAW); // ✅ Changed to DYNAMIC_DRAW
+    glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(TerrainVertex), vertices.data(), GL_DYNAMIC_DRAW); //Changed to DYNAMIC_DRAW so the ground updates without freezing
 
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo);
     glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices.size() * sizeof(unsigned int), indices.data(), GL_STATIC_DRAW);

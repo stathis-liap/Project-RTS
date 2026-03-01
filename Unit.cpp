@@ -29,7 +29,7 @@ int Unit::NextID = 0;
 Unit::Unit(UnitType type, const glm::vec3& pos, int teamID)
     : type_(type), position_(pos), teamID_(teamID), velocity_(0.0f), mesh_(nullptr)
 {
-    id_ = ++NextID; // ✅ Assign Unique ID
+    id_ = ++NextID; // Assign Unique ID
 
     // Initialize Stats
     if (type_ == UnitType::WORKER) {
@@ -288,7 +288,7 @@ void Unit::update(float dt, const Terrain* terrain, const std::vector<std::uniqu
                 float reach = target->radius + 5.0f;
 
                 if (dist <= reach) {
-                    // ✅ ARRIVED -> Switch to Action
+                    // ARRIVED -> Switch to Action
                     state_ = UnitState::GATHERING;
                     velocity_ = glm::vec3(0.0f);
                     m_Path.clear();
@@ -405,7 +405,19 @@ void Unit::update(float dt, const Terrain* terrain, const std::vector<std::uniqu
                     attackTimer_ = 0.0f;
                     targetBuilding_->takeDamage((float)damage_);
                 }
+                if (type_ == UnitType::RANGED) {
+                    // Calculate start (mage hand) and end (enemy body)
+                    glm::vec3 mageHand = position_ + glm::vec3(-2.0f, 2.5f, 1.0f);
+                    glm::vec3 enemyBody = targetBuilding_->getPosition() + glm::vec3(0.0f, 5.0f, 0.0f);
+
+                    // 1. Create the beam line
+                    ParticleManager::addMageBeam(mageHand, enemyBody);
+
+                    // 2. Create a small impact burst at the enemy
+                    ParticleManager::addMageImpact(enemyBody);
+                }
             }
+
         }
     }
 

@@ -7,6 +7,7 @@
 #include "Mesh.h"
 #include "Terrain.h" 
 #include "Frustum.h"
+#include "NavigationGrid.h"
 
 // Simple structure to hold an instance of an object
 struct EnvObject {
@@ -34,16 +35,17 @@ public:
     Environment();
     ~Environment();
 
-    // 1. Const getter (for drawing/reading)
+    // Const getter (for drawing/reading)
     const std::vector<Obstacle>& getObstacles() const { return m_Obstacles; }
 
-    // 2. Non-const getter (for modifying/marking)
+    // Non-const getter (for modifying/marking)
     std::vector<Obstacle>& getObstacles() { return m_Obstacles; }
 
     // Generates the environment.
-    // mapSize: Size of your terrain (e.g., 512.0f)
-    // numObjects: How many trees/rocks to spawn inside (e.g., 1000)
-    void initialize(Terrain* terrain, float mapSize, int numObjects);
+    // mapSize: Size of your terrain
+    // numObjects: How many trees/rocks to spawn inside
+    // checks in the navGrid if the placement is valid
+    void initialize(Terrain* terrain, NavigationGrid* navGrid, float mapSize, int numObjects);
 
     // Helper: Find an obstacle under the mouse cursor
     int getObstacleIdAt(glm::vec3 worldPos, float cursorRadius = 2.0f) {
@@ -65,7 +67,7 @@ public:
         return nullptr;
     }
 
-    // ✅ NEW: Setter for textures
+    //Setter for textures
     void setTextures(GLuint treeTex, GLuint rockTex) {
         m_treeTexture = treeTex;
         m_rockTexture = rockTex;
@@ -84,7 +86,7 @@ private:
 
     std::vector<Obstacle> m_Obstacles;
 
-    // The actual 3D models (loaded once, used many times)
+    // The actual 3D models
     Mesh* treeMesh;
     Mesh* rockMesh;
     Mesh* boulderMesh;
@@ -96,4 +98,4 @@ private:
     float randomFloat(float min, float max);
 };
 
-#endif#pragma once
+#endif
